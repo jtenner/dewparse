@@ -1,10 +1,171 @@
 module Example
 
+from "string" include String
 from "./iter.gr" include Iter
-
 from "./lexer.gr" include Lexer
-use Lexer.{ lex }
+from "./yarder.gr" include Yarder
 
-let lexer = lex("\n 1\n 1.2\n 0\n 0.3\n 4.3e+10\n 4.3e-10\n 4.3e10\n hello\n hello_world\n Testing\n Testing123\n (\n )\n =\n >\n ,\n {\n }\n [\n ]\n (\n )\n .\n ,\n !@#$%^&*<>.")
+use Iter.{ type Iter, type IterResult }
+use Lexer.{ lex, type Token }
+use Yarder.{ type Operator, push_op, pop_group, push_group, push_expr }
+use String.{ concat as (<>) }
+let plus = BinaryOperator("+", 11, Left)
+let minus = BinaryOperator("-", 11, Left)
+let multiply = BinaryOperator("*", 11, Left)
 
-print(Iter.to_list(lexer))
+let remove_whitespace = (t) => match (t) {
+  Whitespace(_) => false,
+  _ => true
+}
+
+let tokens = Iter.filter(remove_whitespace, lex("a + b * c - d"))
+
+enum IntType {
+  IntType(Bool, Number)
+}
+
+enum rec Expr {
+  AddExpr(Expr, Expr),
+  SubExpr(Expr, Expr),
+  MulExpr(Expr, Expr),
+  DivExpr(Expr, Expr),
+  ExpExpr(Expr, Expr),
+  RemExpr(Expr, Expr),
+  ShlExpr(Expr, Expr),
+  ShrExpr(Expr, Expr),
+  LtExpr(Expr, Expr),
+  LteExpr(Expr, Expr),
+  GtExpr(Expr, Expr),
+  GteExpr(Expr, Expr),
+  EqExpr(Expr, Expr),
+  NeqExpr(Expr, Expr),
+  BitAndExpr(Expr, Expr),
+  BitXorExpr(Expr, Expr),
+  BitOrExpr(Expr, Expr),
+  AndExpr(Expr, Expr),
+  OrExpr(Expr, Expr),
+  IsNone(Expr, Expr),
+  VarExpr(String),
+  NameExpr(String),
+
+  BitNotExpr(Expr),
+  NotExpr(Expr),
+  NegExpr(Expr),
+
+  FloatExpr(Float64),
+  IntExpr(BigInt, Bool, Number),
+
+  SelExpr(Expr, String),
+  CallExpr(Expr, List<Expr>),
+}
+
+let add_operator = BinaryOperator("+", 11, Left)
+let sub_operator = BinaryOperator("-", 11, Left)
+let mul_operator = BinaryOperator("*", 12, Left)
+let div_operator = BinaryOperator("/", 12, Left)
+let mod_operator = BinaryOperator("%", 12, Left)
+let exp_operator = BinaryOperator("**", 13, Left)
+let shl_operator = BinaryOperator("<<", 10, Left)
+let shr_operator = BinaryOperator(">>", 10, Left)
+let lt_operator = BinaryOperator("<", 9, Left)
+let lte_operator = BinaryOperator("<=", 9, Left)
+let gt_operator = BinaryOperator(">", 9, Left)
+let gte_operator = BinaryOperator(">=", 9, Left)
+let eq_operator = BinaryOperator("==", 8, Left)
+let neq_operator = BinaryOperator("!=", 8, Left)
+let bit_and_operator = BinaryOperator("&", 7, Left)
+let bit_xor_operator = BinaryOperator("^", 6, Left)
+let bit_or_operator = BinaryOperator("|", 5, Left)
+let and_operator = BinaryOperator("&&", 4, Left)
+let or_operator = BinaryOperator("||", 3, Left)
+let is_none_operator = BinaryOperator("??", 3, Left)
+
+let bit_not_operator = PrefixOperator("~")
+let not_operator = PrefixOperator("!")
+let neg_operator = PrefixOperator("-")
+
+let make_yarder = () => Yarder.make(
+  binary = (kind, left, right) => match (kind) {
+    "+" => Ok(AddExpr(left, right)),
+    "-" => Ok(SubExpr(left, right)),
+    "*" => Ok(MulExpr(left, right)),
+    "/" => Ok(DivExpr(left, right)),
+    "**" => Ok(ExpExpr(left, right)),
+    "%" => Ok(RemExpr(left, right)),
+    "<<" => Ok(ShlExpr(left, right)),
+    ">>" => Ok(ShrExpr(left, right)),
+    "<" => Ok(LtExpr(left, right)),
+    "<=" => Ok(LteExpr(left, right)),
+    ">" => Ok(GtExpr(left, right)),
+    ">=" => Ok(GteExpr(left, right)),
+    "==" => Ok(EqExpr(left, right)),
+    "!=" => Ok(NeqExpr(left, right)),
+    "&" => Ok(BitAndExpr(left, right)),
+    "^" => Ok(BitXorExpr(left, right)),
+    "|" => Ok(BitOrExpr(left, right)),
+    "&&" => Ok(AndExpr(left, right)),
+    "||" => Ok(OrExpr(left, right)),
+    "??" => Ok(IsNone(left, right)),
+    _ => Err("Invalid Binary Operator: " <> kind),
+  },
+  prefix = (kind, expr) => match (kind) {
+    "~" => Ok(BitNotExpr(expr)),
+    "!" => Ok(NotExpr(expr)),
+    "-" => Ok(NegExpr(expr)),
+    _ => Err("Invalid Prefix Operator: " <> kind)
+  }
+ )
+
+let rec parse_expr = (iter: Iter<Token>) =>
+  do_parse(
+    iter,
+    make_yarder()
+  )
+and do_parse_unary = (iter, yarder) => match (Iter.next(iter)) {
+    Next(t, iter) => match(t) {
+      Name(name, _) => do_parse_binary(iter, push_expr(VarExpr(name))),
+      Symbol("~", _) => match (push_op(bit_not_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("!", _) => match (push_op(not_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("-", _) => match (push_op(neg_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Type(name, _) => do_parse_binary(iter, push_expr(NameExpr(name))),
+      // Keyword(String, Number),
+      // Integer(Bool, BigInt, Bool, Number, Number),
+      // Float(Bool, BigInt, BigInt, Bool, BigInt, Number),
+      EOF(_) => do_finalize(iter, yarder),
+      _ => Err("Unknown Expression."),
+    },
+    End => do_finalize(iter, yarder)
+  }
+and do_parse_binary = (iter, yarder) => match (Iter.next(iter)) {
+  Next(t, iter) => match(t) {
+    Name(name, _) => {
+      let expr = VarExpr(name)
+      let yarder = push_expr(expr)
+      do_parse_binary(iter, yarder)
+    },
+    Type(String, Number),
+    Symbol(String, Number),
+    Keyword(String, Number),
+    Integer(Bool, BigInt, Bool, Number, Number),
+    Float(Bool, BigInt, BigInt, Bool, BigInt, Number),
+    EOF(_) => do_finalize(iter, yarder),
+    _ => Err("Unknown Expression."),
+  },
+  End => do_finalize(iter, yarder)
+}
+and do_finalize = (iter, yarder) => match (Yarder.finalize(yarder)) {
+  Ok(t_expression) => Ok((t_expression, iter)),
+  Err(t) => Err(t),
+}
+
+print(Iter.to_list(tokens))
+
