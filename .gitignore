@@ -1,0 +1,8 @@
+# Grain artifacts
+src/**/*.gro
+src/**/*.mashtree
+src/**/*.modsig
+src/**/*.wasm
+
+# Grain build artifacts
+target

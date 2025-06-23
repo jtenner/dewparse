@@ -1,0 +1,107 @@
+module Iter
+from "list" include List
+
+provide enum rec Iter<t_value> {
+  Iter(() => IterResult<t_value>),
+  Done,
+}
+and provide enum IterResult<t_value> {
+  Next(t_value, Iter<t_value>),
+  End,
+}
+
+provide let next = (iter: Iter<t_value>) => {
+  match (iter) {
+    Iter(fn) => fn(),
+    Done => End,
+  }
+}
+
+provide let rec unfold = (
+  t_context: t_context,
+  fn: (t_context) => Option<(t_context, t_value)>,
+) => Iter(() => match (fn(t_context)) {
+  Some((t_context, t_value)) => Next(t_value, unfold(t_context, fn)),
+  None => End,
+})
+
+provide enum IterTransformResult<t_context, t_result> {
+  Continue(t_context),
+  Retry(t_context),
+  Yield(t_result, t_context),
+  YieldRetry(t_result, t_context),
+  Return(t_result),
+  Finish,
+}
+
+provide let rec transform = (
+  fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,
+  t_context: t_context,
+  t_iter: Iter<t_value>,
+  flush: (t_context) => Option<t_result> = (_) => None,
+) => Iter(() => do_transform(fn, t_context, next(t_iter), flush))
+and do_transform = (
+  fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,
+  t_context: t_context,
+  t_iter_result: IterResult<t_value>,
+  flush: (t_context) => Option<t_result>,
+) => {
+  match (t_iter_result) {
+    Next(t_value, t_iter) => match (fn(t_context, t_value)) {
+      // Keep consuming the underlying iterator
+      Continue(t_context) => do_transform(fn, t_context, next(t_iter), flush),
+      // Retry the previous value with a new context state
+      Retry(t_context) => do_transform(fn, t_context, next(t_iter), flush),
+      // Yield return a transformed value
+      Yield(t_result, t_context) =>
+        Next(t_result, Iter(() => do_transform(fn, t_context, next(t_iter), flush))),
+      // Yield Retry returns the next transformed value, but retries the previous underlying value
+      // with a new state context
+      YieldRetry(t_result, t_context) =>
+        Next(t_result, Iter(() => do_transform(fn, t_context, t_iter_result, flush))),
+      // Return returns a final transformed value and ends the iterator
+      Return(t_result) => Next(t_result, Done),
+      // Finish ends the iterator if no more values can be produced
+      Finish => End,
+    },
+    End => match (flush(t_context)) {
+      // If the iterator ends but the transformer has not ended, flush the context
+      Some(t_result) => Next(t_result, Done),
+      // If the iterator ends and the transformer has ended, end the iterator
+      None => End,
+    },
+  }
+}
+
+provide let rec map = (
+  fn: (t_value) => t_result,
+  t_iter: Iter<t_value>,
+) => Iter(() => match (next(t_iter)) {
+  Next(t_value, t_iter) => Next(fn(t_value), map(fn, t_iter)),
+  End => End,
+})
+
+provide let rec filter = (
+  fn: (t_value) => Bool,
+  t_iter: Iter<t_value>,
+) => transform(
+  (t_context, t_value) => if (fn(t_value)) {
+    Yield(t_value, t_context)
+  } else {
+    Continue(t_context)
+  },
+  void,
+  t_iter,
+)
+
+let rec accumulate = (t_iter: Iter<t_value>) => 
+  do_accumulate(next(t_iter), [])
+and do_accumulate = (t_iter_result: IterResult<t_value>, t_list: List<t_value>) => {
+  match (t_iter_result) {
+    Next(t_value, t_iter) => do_accumulate(next(t_iter), [t_value, ...t_list]),
+    End => t_list,
+  }
+}
+
+provide let to_list = (t_iter: Iter<t_value>) =>
+  List.reverse(accumulate(t_iter))

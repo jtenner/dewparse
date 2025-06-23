@@ -1,0 +1,10 @@
+module Example
+
+from "./iter.gr" include Iter
+
+from "./lexer.gr" include Lexer
+use Lexer.{ lex }
+
+let lexer = lex("\n 1\n 1.2\n 0\n 0.3\n 4.3e+10\n 4.3e-10\n 4.3e10\n hello\n hello_world\n Testing\n Testing123\n (\n )\n =\n >\n ,\n {\n }\n [\n ]\n (\n )\n .\n ,\n !@#$%^&*<>.")
+
+print(Iter.to_list(lexer))
