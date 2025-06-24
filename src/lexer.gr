@@ -24,7 +24,7 @@ from "runtime/atof/parse" include Parse as Atof
 use Upper.{ upper_set }
 use Lower.{ lower_set }
 use Set.Immutable.{ type Set }
-use Iter.{ type Iter, type IterResult, state, return_, yield_ }
+use Iter.{ type Iter, type IterResult, to_state, return_, yield_ }
 use Conv.{ wasmI32ToNumber }
 use Buffer.{ type Buffer }
 
@@ -499,38 +499,39 @@ provide let code_point_transformer = (
     (state, (code_point, offset)) => match (state) {
       // Starting state
       Start => match (void) {
-        _ when is_whitespace(code_point) => Continue(LexWhitespace(offset)),
+        _ when is_whitespace(code_point) => to_state(LexWhitespace(offset)),
         _ when is_id_start(code_point) =>
-          Continue(LexName([code_point], offset)),
+          to_state(LexName([code_point], offset)),
         _ when is_type_start(code_point) =>
-          Continue(LexType([code_point], offset)),
-        _ when is_0(code_point) => Continue(LexZeroStart(offset, false)),
+          to_state(LexType([code_point], offset)),
+        _ when is_0(code_point) => to_state(LexZeroStart(offset, false)),
         _ when is_digit(code_point) =>
-          Continue(
+          to_state(
             LexDecimal(offset, false, decimal_codepoint_to_bigint(code_point)),
           ),
-        _ when is_minus(code_point) => Continue(LexMinus(offset)),
+        _ when is_minus(code_point) => to_state(LexMinus(offset)),
         _ when is_multi_char_symbol(code_point) =>
-          Continue(LexMultiCharSymbol(offset, [code_point])),
+          to_state(LexMultiCharSymbol(offset, [code_point])),
         _ when is_reserved_symbol(code_point) =>
-          Yield(Symbol(code_points_to_string([code_point]), offset), Start),
-        _ => Continue(UnknownTokenKind(offset)),
+          yield_(Symbol(code_points_to_string([code_point]), offset), Start),
+        _ => to_state(UnknownTokenKind(offset)),
       },
 
       // Lexing a whitespace token
       LexWhitespace(offset) => match (void) {
-        _ when is_whitespace(code_point) => Continue(LexWhitespace(offset)),
-        _ => YieldRetry(Whitespace(offset), Start),
+        _ when is_whitespace(code_point) => to_state(LexWhitespace(offset)),
+        _ => yield_(Whitespace(offset), Start, advance = false),
       },
 
       // Lexing a name token
       LexName(code_points, offset) => match (void) {
         _ when is_id_continue(code_point) =>
-          Continue(LexName([code_point, ...code_points], offset)),
+          to_state(LexName([code_point, ...code_points], offset)),
         _ =>
-          YieldRetry(
+          yield_(
             Name(code_points_to_string(List.reverse(code_points)), offset),
             Start,
+            advance = false,
           ),
       },
       LexType(code_points, offset) => match (void) {
@@ -802,7 +803,7 @@ provide let code_point_transformer = (
 
 provide let lex = (
   input: String,
-  keywords: Set<String>=Set.Immutable.fromList([]),
+  keywords: Set<String> = Set.Immutable.fromList([]),
 ) =>
   code_point_transformer(
     to_codepoint_iter(input),

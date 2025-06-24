@@ -32,9 +32,9 @@ provide enum IterTransformResult<t_context, t_result> {
   Return{ value: Option<t_result>, },
 }
 
-provide let state = (t_context: t_context, advance: Bool=true) =>
+provide let to_state = (t_context: t_context, advance: Bool=true) =>
   State{ context: t_context, advance }
-provide let return_ = (value: Option<t_value>=None) => Return{ value }
+provide let return_ = (value: Option<t_value> = None) => Return{ value }
 provide let yield_ = (
   t_result: t_result,
   t_context: t_context,
@@ -45,7 +45,7 @@ provide let rec transform = (
   fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,
   t_context: t_context,
   t_iter: Iter<t_value>,
-  flush: t_context => Option<t_result>=(_) => None,
+  flush: t_context => Option<t_result> = (_) => None,
 ) => Iter(() => do_transform(fn, t_context, next(t_iter), flush))
 and do_transform = (
   fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,

@@ -7,3 +7,6 @@ run = "rimraf -g src/**/*.{gro,mashtree,modsig,wasm,wat} dist/**/* target"
 
 [tasks.start]
 run = "grain src/run.gr --debug --wat"
+
+[tasks.format]
+run = "grain format src -o src"
