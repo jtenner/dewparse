@@ -40,11 +40,12 @@ let default_binary = (
   t_expression_left: t_expression,
   t_expression_right: t_expression,
 ) => Err("Invalid Binary Operator.")
+
 provide let make = (
   // left unary
-  prefix: (String, t_expression) => Result<t_expression, String> =default_prefix,
+  prefix: (String, t_expression) => Result<t_expression, String> = default_prefix,
   // right unary
-  postfix: (String, t_expression) => Result<t_expression, String> =default_postfix,
+  postfix: (String, t_expression) => Result<t_expression, String> = default_postfix,
   // binary
   binary: (String, t_expression, t_expression) => Result<t_expression, String> = default_binary,
 ) =>

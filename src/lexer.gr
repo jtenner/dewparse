@@ -35,9 +35,8 @@ provide enum Token {
   Type(String, Number),
   Symbol(String, Number),
   Keyword(String, Number),
-  // negative, value, signed, size, offset
+  // value, signed, size, offset
   Integer(BigInt, Bool, Number, Number),
-  // negative, integer, decimal, exponent_negative, exponent, offset
   Float(Float64, Number),
   Whitespace(Number),
   Unknown(Number),
@@ -507,7 +506,7 @@ provide let code_point_transformer = (
         _ when is_0(code_point) => to_state(LexZeroStart(offset, false)),
         _ when is_digit(code_point) =>
           to_state(
-            LexDecimal(offset, false, decimal_codepoint_to_bigint(code_point)),
+            LexDecimal(offset, false, decimal_codepoint_to_bigint(code_point))
           ),
         _ when is_minus(code_point) => to_state(LexMinus(offset)),
         _ when is_multi_char_symbol(code_point) =>
@@ -520,7 +519,7 @@ provide let code_point_transformer = (
       // Lexing a whitespace token
       LexWhitespace(offset) => match (void) {
         _ when is_whitespace(code_point) => to_state(LexWhitespace(offset)),
-        _ => yield_(Whitespace(offset), Start, advance = false),
+        _ => yield_(Whitespace(offset), Start, advance=false),
       },
 
       // Lexing a name token
@@ -531,84 +530,88 @@ provide let code_point_transformer = (
           yield_(
             Name(code_points_to_string(List.reverse(code_points)), offset),
             Start,
-            advance = false,
+            advance=false
           ),
       },
       LexType(code_points, offset) => match (void) {
         _ when is_type_continue(code_point) =>
-          Continue(LexType([code_point, ...code_points], offset)),
+          to_state(LexType([code_point, ...code_points], offset)),
         _ =>
-          YieldRetry(
+          yield_(
             Type(code_points_to_string(List.reverse(code_points)), offset),
             Start,
+            advance=false
           ),
       },
       LexZeroStart(offset, negative) => match (void) {
-        _ when is_x(code_point) => Continue(LexHex(offset, negative, 0t)),
-        _ when is_o(code_point) => Continue(LexOctal(offset, negative, 0t)),
-        _ when is_b(code_point) => Continue(LexBinary(offset, negative, 0t)),
+        _ when is_x(code_point) => to_state(LexHex(offset, negative, 0t)),
+        _ when is_o(code_point) => to_state(LexOctal(offset, negative, 0t)),
+        _ when is_b(code_point) => to_state(LexBinary(offset, negative, 0t)),
         _ when is_dot(code_point) => {
           let buffer = Buffer.make(1024)
           if (negative) {
             Buffer.addUint8(Uint8.fromNumber(_minus), buffer)
           }
           Buffer.addUint8(Uint8.fromNumber(_0), buffer)
-          Continue(LexFloatFractionPartStart(offset, buffer))
+          to_state(LexFloatFractionPartStart(offset, buffer))
         },
-        _ => Retry(FinalizeInteger(offset, false, 0t)),
+        _ => to_state(FinalizeInteger(offset, false, 0t), advance=false),
       },
       LexHex(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
           _ when is_hex(code_point) =>
-            Continue(
+            to_state(
               LexHex(
                 offset,
                 negative,
                 value *. 16t +. hex_codepoint_to_bigint(code_point),
-              ),
+              )
             ),
-          _ => Retry(FinalizeInteger(offset, negative, value)),
+          _ =>
+            to_state(FinalizeInteger(offset, negative, value), advance=false),
         }
       },
       LexOctal(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (code_point) {
           _ when is_octal(code_point) =>
-            Continue(
+            to_state(
               LexOctal(
                 offset,
                 negative,
                 value *. 8t +. octal_codepoint_to_bigint(code_point),
-              ),
+              )
             ),
-          _ => Retry(FinalizeInteger(offset, negative, value)),
+          _ =>
+            to_state(FinalizeInteger(offset, negative, value), advance=false),
         }
       },
       LexBinary(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
           _ when is_binary(code_point) =>
-            Continue(
+            to_state(
               LexBinary(
                 offset,
                 negative,
                 value *. 2t +. binary_codepoint_to_bigint(code_point),
-              ),
+              )
             ),
-          _ => Retry(FinalizeInteger(offset, negative, value)),
+          _ =>
+            to_state(FinalizeInteger(offset, negative, value), advance=false),
         }
       },
       LexDecimal(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
           _ when is_digit(code_point) =>
-            Continue(
+            to_state(
               LexDecimal(
                 offset,
                 negative,
                 value *. 10t +. decimal_codepoint_to_bigint(code_point),
-              ),
+              )
             ),
           _ when is_dot(code_point) => {
             let buffer = Buffer.make(1024)
@@ -616,32 +619,37 @@ provide let code_point_transformer = (
               Buffer.addUint8(Uint8.fromNumber(_minus), buffer)
             }
             Buffer.addString(toString(value), buffer)
-            Continue(LexFloatFractionPartStart(offset, buffer))
+            to_state(LexFloatFractionPartStart(offset, buffer))
           },
-          _ => Retry(FinalizeInteger(offset, negative, value)),
+          _ =>
+            to_state(FinalizeInteger(offset, negative, value), advance=false),
         }
       },
       LexMinus(offset) => match (void) {
-        _ when is_0(code_point) => Continue(LexZeroStart(offset, true)),
+        _ when is_0(code_point) => to_state(LexZeroStart(offset, true)),
         _ when is_digit(code_point) =>
-          Continue(
-            LexDecimal(offset, true, decimal_codepoint_to_bigint(code_point)),
+          to_state(
+            LexDecimal(offset, true, decimal_codepoint_to_bigint(code_point))
           ),
         _ when is_multi_char_symbol(code_point) =>
-          Continue(LexMultiCharSymbol(offset, [code_point, _minus])),
+          to_state(LexMultiCharSymbol(offset, [code_point, _minus])),
         // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
         // with a new state.
-        _ => YieldRetry(Symbol("-", offset), Start),
+        _ => yield_(Symbol("-", offset), Start, advance=false),
       },
       LexMultiCharSymbol(offset, code_points) => match (void) {
         _ when is_multi_char_symbol(code_point) =>
-          Continue(LexMultiCharSymbol(offset, [code_point, ...code_points])),
+          to_state(
+            LexMultiCharSymbol(offset, [code_point, ...code_points]),
+            advance=false
+          ),
         // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
         // with a new state.
         _ =>
-          YieldRetry(
+          yield_(
             Symbol(code_points_to_string(List.reverse(code_points)), offset),
             Start,
+            advance=false
           ),
       },
       LexFloatFractionPartStart(offset, buffer) => {
@@ -649,9 +657,9 @@ provide let code_point_transformer = (
         match (void) {
           _ when is_digit(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatFractionPart(offset, buffer))
+            to_state(LexFloatFractionPart(offset, buffer))
           },
-          _ => Continue(UnknownTokenKind(offset)),
+          _ => to_state(UnknownTokenKind(offset)),
         }
       },
 
@@ -661,17 +669,22 @@ provide let code_point_transformer = (
         match (void) {
           _ when is_digit(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatFractionPart(offset, buffer))
+            to_state(LexFloatFractionPart(offset, buffer))
           },
           _ when is_e(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatExponentPartMaybeNegative(offset, buffer))
+            to_state(LexFloatExponentPartMaybeNegative(offset, buffer))
           },
           // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
           _ => match (Atof.parseFloat(Buffer.toString(buffer))) {
             Ok(value) =>
-              YieldRetry(Float(Float64.fromNumber(value), offset), Start), // with a new state.
-            Err(t) => Retry(UnknownTokenKind(offset)),
+              // with a new state.
+              yield_(
+                Float(Float64.fromNumber(value), offset),
+                Start,
+                advance=false
+              ),
+            Err(t) => to_state(UnknownTokenKind(offset), advance=false),
           },
         }
       },
@@ -679,39 +692,43 @@ provide let code_point_transformer = (
         match (void) {
           _ when is_plus(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatExponentPartStart(offset, buffer))
+            to_state(LexFloatExponentPartStart(offset, buffer))
           },
           _ when is_minus(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatExponentPartStart(offset, buffer))
+            to_state(LexFloatExponentPartStart(offset, buffer))
           },
           _ when is_digit(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatExponentPart(offset, buffer))
+            to_state(LexFloatExponentPart(offset, buffer))
           },
-          _ => Continue(UnknownTokenKind(offset)),
+          _ => to_state(UnknownTokenKind(offset)),
         }
       },
       LexFloatExponentPartStart(offset, buffer) => match (void) {
         _ when is_digit(code_point) => {
           Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-          Continue(LexFloatExponentPart(offset, buffer))
+          to_state(LexFloatExponentPart(offset, buffer))
         },
-        _ => Continue(UnknownTokenKind(offset)),
+        _ => to_state(UnknownTokenKind(offset)),
       },
       LexFloatExponentPart(offset, buffer) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
           _ when is_digit(code_point) => {
             Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
-            Continue(LexFloatExponentPart(offset, buffer))
+            to_state(LexFloatExponentPart(offset, buffer))
           },
           // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
           // with a new state.
           _ => match (Atof.parseFloat(Buffer.toString(buffer))) {
             Ok(value) =>
-              YieldRetry(Float(Float64.fromNumber(value), offset), Start),
-            Err(t) => Retry(UnknownTokenKind(offset)),
+              yield_(
+                Float(Float64.fromNumber(value), offset),
+                Start,
+                advance=false
+              ),
+            Err(t) => to_state(UnknownTokenKind(offset), advance=false),
           },
         }
       },
@@ -720,34 +737,34 @@ provide let code_point_transformer = (
         let value = if (negative) (-)(value) else value
         match (void) {
           _ when is_u(code_point) =>
-            Continue(FinalizeIntegerUnsigned(offset, negative, value)),
+            to_state(FinalizeIntegerUnsigned(offset, negative, value)),
           _ when is_s(code_point) =>
-            Yield(Integer(value, true, 8, offset), Start),
+            yield_(Integer(value, true, 8, offset), Start),
           _ when is_S(code_point) =>
-            Yield(Integer(value, true, 16, offset), Start),
+            yield_(Integer(value, true, 16, offset), Start),
           _ when is_l(code_point) =>
-            Yield(Integer(value, true, 32, offset), Start),
+            yield_(Integer(value, true, 32, offset), Start),
           _ when is_L(code_point) =>
-            Yield(Integer(value, true, 64, offset), Start),
-          _ => YieldRetry(Integer(value, true, 32, offset), Start),
+            yield_(Integer(value, true, 64, offset), Start),
+          _ => yield_(Integer(value, true, 32, offset), Start, advance=false),
         }
       },
       FinalizeIntegerUnsigned(offset, negative, value) => {
         match (void) {
           _ when is_s(code_point) =>
-            Yield(Integer(value, false, 8, offset), Start),
+            yield_(Integer(value, false, 8, offset), Start),
           _ when is_S(code_point) =>
-            Yield(Integer(value, false, 16, offset), Start),
+            yield_(Integer(value, false, 16, offset), Start),
           _ when is_l(code_point) =>
-            Yield(Integer(value, false, 32, offset), Start),
+            yield_(Integer(value, false, 32, offset), Start),
           _ when is_L(code_point) =>
-            Yield(Integer(value, false, 64, offset), Start),
-          _ => Continue(UnknownTokenKind(offset)),
+            yield_(Integer(value, false, 64, offset), Start),
+          _ => to_state(UnknownTokenKind(offset)),
         }
       },
       UnknownTokenKind(offset) => match (code_point) {
-        _ when !is_whitespace(code_point) => Continue(UnknownTokenKind(offset)),
-        _ => YieldRetry(Unknown(offset), Start),
+        _ when !is_whitespace(code_point) => to_state(UnknownTokenKind(offset)),
+        _ => yield_(Unknown(offset), Start, advance=false),
       },
     },
     Start,

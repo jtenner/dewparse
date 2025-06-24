@@ -111,131 +111,136 @@ let make_yarder = () =>
 
 let rec parse_expr = (iter: Iter<Token>) => do_parse_unary(iter, make_yarder())
 and do_parse_unary = (iter, yarder) => match (Iter.next(iter)) {
-  Next(t, iter) => match (t) {
-    Name(name, _) => do_parse_binary(iter, push_expr(VarExpr(name), yarder)),
-    Symbol("~", _) => match (push_op(bit_not_operator, yarder)) {
-      Ok(yarder) => do_parse_unary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("!", _) => match (push_op(not_operator, yarder)) {
-      Ok(yarder) => do_parse_unary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("-", _) => match (push_op(neg_operator, yarder)) {
-      Ok(yarder) => do_parse_unary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("(", _) => do_parse_unary(iter, push_group(yarder)),
-    Type(name, _) => do_parse_binary(iter, push_expr(NameExpr(name), yarder)),
-    // TODO: add integers
-    // TOOD: add floats
-    EOF(_) => do_finalize(iter, yarder),
-    _ => Err("Unknown Expression."),
+  Next(t, iter) => {
+    print(("Unary: ", t))
+    match (t) {
+      Name(name, _) => do_parse_binary(iter, push_expr(VarExpr(name), yarder)),
+      Symbol("~", _) => match (push_op(bit_not_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("!", _) => match (push_op(not_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("-", _) => match (push_op(neg_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("(", _) => do_parse_unary(iter, push_group(yarder)),
+      Type(name, _) => do_parse_binary(iter, push_expr(NameExpr(name), yarder)),
+      Keyword("true", _) => do_parse_unary(iter, push_expr(TrueExpr, yarder)),
+      Keyword("false", _) => do_parse_unary(iter, push_expr(FalseExpr, yarder)),
+      // TODO: add integers
+      // TOOD: add floats
+      EOF(_) => do_finalize(iter, yarder),
+      _ => Err("Unknown Expression."),
+    }
   },
   End => do_finalize(iter, yarder),
 }
 and do_parse_binary = (iter, yarder) => match (Iter.next(iter)) {
-  Next(t, iter) => match (t) {
-    // There is no right unary for `[.] [name]`
-    Symbol(".", _) => match (pop_value(yarder)) {
-      Ok((expr, yarder)) => match (Iter.next(iter)) {
-        Next(t, iter) => match (t) {
-          Name(name, _) =>
-            do_parse_binary(iter, push_expr(SelExpr(expr, name), yarder)),
-          _ => Err("Expected Name after '.'"),
+  Next(t, iter) => {
+    print(("Binary: ", t))
+    match (t) {
+      
+      // There is no right unary for `[.] [name]`
+      Symbol(".", _) => match (pop_value(yarder)) {
+        Ok((expr, yarder)) => match (Iter.next(iter)) {
+          Next(t, iter) => match (t) {
+            Name(name, _) =>
+              do_parse_binary(iter, push_expr(SelExpr(expr, name), yarder)),
+            _ => Err("Expected Name after '.'"),
+          },
+          End => Err("Expected Name after '.'"),
         },
-        End => Err("Expected Name after '.'"),
+        Err(t) => Err(t),
       },
-      Err(t) => Err(t),
-    },
-    Symbol("+", _) => match (push_op(add_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("-", _) => match (push_op(sub_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("*", _) => match (push_op(mul_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("/", _) => match (push_op(div_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("**", _) => match (push_op(mod_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("%", _) => match (push_op(exp_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("<<", _) => match (push_op(shl_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol(">>", _) => match (push_op(shr_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("<", _) => match (push_op(lt_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("<=", _) => match (push_op(lte_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol(">", _) => match (push_op(gt_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol(">=", _) => match (push_op(gte_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("==", _) => match (push_op(eq_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("!=", _) => match (push_op(neq_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("&", _) => match (push_op(bit_and_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("^", _) => match (push_op(bit_xor_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("|", _) => match (push_op(bit_or_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("&&", _) => match (push_op(and_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("||", _) => match (push_op(or_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Symbol("??", _) => match (push_op(is_none_operator, yarder)) {
-      Ok(yarder) => do_parse_binary(iter, yarder),
-      Err(t) => Err(t),
-    },
-    Keyword("true", _) => do_parse_binary(iter, push_expr(TrueExpr, yarder)),
-    Keyword("false", _) => do_parse_binary(iter, push_expr(FalseExpr, yarder)),
+      Symbol("+", _) => match (push_op(add_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("-", _) => match (push_op(sub_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("*", _) => match (push_op(mul_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("/", _) => match (push_op(div_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("**", _) => match (push_op(mod_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("%", _) => match (push_op(exp_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("<<", _) => match (push_op(shl_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol(">>", _) => match (push_op(shr_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("<", _) => match (push_op(lt_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("<=", _) => match (push_op(lte_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol(">", _) => match (push_op(gt_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol(">=", _) => match (push_op(gte_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("==", _) => match (push_op(eq_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("!=", _) => match (push_op(neq_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("&", _) => match (push_op(bit_and_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("^", _) => match (push_op(bit_xor_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("|", _) => match (push_op(bit_or_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("&&", _) => match (push_op(and_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("||", _) => match (push_op(or_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
+      Symbol("??", _) => match (push_op(is_none_operator, yarder)) {
+        Ok(yarder) => do_parse_unary(iter, yarder),
+        Err(t) => Err(t),
+      },
 
-    // Integer(Bool, BigInt, Bool, Number, Number),
-    Float(value, _) =>
-      do_parse_binary(iter, push_expr(FloatExpr(value), yarder)),
-    EOF(_) => do_finalize(iter, yarder),
-    _ => Err("Unknown Expression."),
+
+      EOF(_) => do_finalize(iter, yarder),
+      _ => Err("Unknown Expression."),
+    }
   },
   End => do_finalize(iter, yarder),
 }
