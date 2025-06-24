@@ -1,4 +1,5 @@
 module Iter
+
 from "list" include List
 
 provide enum rec Iter<t_value> {
@@ -19,96 +20,77 @@ provide let next = (iter: Iter<t_value>) => {
 
 provide let rec unfold = (
   t_context: t_context,
-  fn: (t_context) => Option<(t_context, t_value)>,
+  fn: t_context => Option<(t_context, t_value)>,
 ) => Iter(() => match (fn(t_context)) {
   Some((t_context, t_value)) => Next(t_value, unfold(t_context, fn)),
   None => End,
 })
 
 provide enum IterTransformResult<t_context, t_result> {
-  State{
-    context: t_context,
-    advance: Bool,
-  },
-  Yield{
-    value: t_result,
-    context: t_context,
-    advance: Bool,
-  },
-  Return{ value: Option<t_result> },
+  State{ context: t_context, advance: Bool },
+  Yield{ value: t_result, context: t_context, advance: Bool },
+  Return{ value: Option<t_result>, },
 }
 
-provide let state = (t_context: t_context, advance: Bool = true) =>
-  State{context: t_context, advance: advance}
-provide let return_ = (value: Option<t_value> = None) => Return{ value }
-provide let yield_ = (t_result: t_result, t_context: t_context, advance: Bool = true) =>
-  Yield{value: t_result, context: t_context, advance: advance}
-
+provide let state = (t_context: t_context, advance: Bool=true) =>
+  State{ context: t_context, advance }
+provide let return_ = (value: Option<t_value>=None) => Return{ value }
+provide let yield_ = (
+  t_result: t_result,
+  t_context: t_context,
+  advance: Bool=true,
+) => Yield{ value: t_result, context: t_context, advance }
 
 provide let rec transform = (
   fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,
   t_context: t_context,
   t_iter: Iter<t_value>,
-  flush: (t_context) => Option<t_result> = (_) => None,
+  flush: t_context => Option<t_result>=(_) => None,
 ) => Iter(() => do_transform(fn, t_context, next(t_iter), flush))
 and do_transform = (
   fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,
   t_context: t_context,
   t_iter_result: IterResult<t_value>,
-  flush: (t_context) => Option<t_result>,
-) =>
-  match (t_iter_result) {
-    Next(t_value, t_iter) => match (fn(t_context, t_value)) {
-      Yield{
-        value: t_result,
-        context: t_context,
-        advance: false,
-      } => Next(t_result, Iter(() => do_transform(fn, t_context, t_iter_result, flush))),
-      Yield{
-        value: t_result,
-        context: t_context,
-        advance: true,
-      } => Next(t_result, Iter(() => do_transform(fn, t_context, next(t_iter), flush))),
-      State{
-        context: t_context,
-        advance: false,
-      } => do_transform(fn, t_context, t_iter_result, flush),
-      State{
-        context: t_context,
-        advance: true,
-      } => do_transform(fn, t_context, next(t_iter), flush),
-      Return{ value: Some(t_result) } => Next(t_result, Done),
-      Return{ value: None } => End,
-    },
-    End => match (flush(t_context)) {
-      Some(t_result) => Next(t_result, Done),
-      None => End,
-    },
-  }
+  flush: t_context => Option<t_result>,
+) => match (t_iter_result) {
+  Next(t_value, t_iter) => match (fn(t_context, t_value)) {
+    Yield{ value: t_result, context: t_context, advance: false } =>
+      Next(
+        t_result,
+        Iter(() => do_transform(fn, t_context, t_iter_result, flush)),
+      ),
+    Yield{ value: t_result, context: t_context, advance: true } =>
+      Next(
+        t_result,
+        Iter(() => do_transform(fn, t_context, next(t_iter), flush)),
+      ),
+    State{ context: t_context, advance: false } =>
+      do_transform(fn, t_context, t_iter_result, flush),
+    State{ context: t_context, advance: true } =>
+      do_transform(fn, t_context, next(t_iter), flush),
+    Return{ value: Some(t_result) } => Next(t_result, Done),
+    Return{ value: None } => End,
+  },
+  End => match (flush(t_context)) {
+    Some(t_result) => Next(t_result, Done),
+    None => End,
+  },
+}
 
-provide let rec map = (
-  fn: (t_value) => t_result,
-  t_iter: Iter<t_value>,
-) => Iter(() => match (next(t_iter)) {
-  Next(t_value, t_iter) => Next(fn(t_value), map(fn, t_iter)),
-  End => End,
-})
+provide let rec map = (fn: t_value => t_result, t_iter: Iter<t_value>) =>
+  Iter(() => match (next(t_iter)) {
+    Next(t_value, t_iter) => Next(fn(t_value), map(fn, t_iter)),
+    End => End,
+  })
 
-provide let rec filter = (
-  fn: (t_value) => Bool,
-  t_iter: Iter<t_value>,
-) => transform(
-  (t_context, t_value) => if (fn(t_value)) {
+provide let rec filter = (fn: t_value => Bool, t_iter: Iter<t_value>) =>
+  transform((t_context, t_value) => if (fn(t_value)) {
     Yield{ value: t_value, context: t_context, advance: true }
   } else {
     State{ context: t_context, advance: true }
-  },
-  void,
-  t_iter,
-)
+  }, void, t_iter)
 
-let rec accumulate = (t_iter: Iter<t_value>) => 
-  do_accumulate(next(t_iter), [])
+let rec accumulate = (t_iter: Iter<t_value>) => do_accumulate(next(t_iter), [])
 and do_accumulate = (t_iter_result: IterResult<t_value>, t_list: List<t_value>) => {
   match (t_iter_result) {
     Next(t_value, t_iter) => do_accumulate(next(t_iter), [t_value, ...t_list]),

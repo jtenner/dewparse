@@ -23,12 +23,8 @@ from "runtime/atof/parse" include Parse as Atof
 
 use Upper.{ upper_set }
 use Lower.{ lower_set }
-use Set.Immutable.{ type Set } 
-use Iter.{ type Iter, type IterResult,
-state,
-return_,
-yield_,
-}
+use Set.Immutable.{ type Set }
+use Iter.{ type Iter, type IterResult, state, return_, yield_ }
 use Conv.{ wasmI32ToNumber }
 use Buffer.{ type Buffer }
 
@@ -39,7 +35,7 @@ provide enum Token {
   Type(String, Number),
   Symbol(String, Number),
   Keyword(String, Number),
-  // negative, value, signed, size, offset 
+  // negative, value, signed, size, offset
   Integer(BigInt, Bool, Number, Number),
   // negative, integer, decimal, exponent_negative, exponent, offset
   Float(Float64, Number),
@@ -50,21 +46,17 @@ provide enum Token {
 
 provide type CodePointIter = Iter<(CodePoint, Number)>
 
-provide type CodePointPredicate = (CodePoint) => Bool
+provide type CodePointPredicate = CodePoint => Bool
 
+provide let (|.) = (left: CodePointPredicate, right: CodePointPredicate) =>
+  (c: CodePoint) => left(c) || right(c)
 
-provide let (|.) = (
-  left: CodePointPredicate,
-  right: CodePointPredicate,
-) => (c: CodePoint) => left(c) || right(c)
-
-provide let (&.) = (
-  left: CodePointPredicate,
-  right: CodePointPredicate,
-) => (c: CodePoint) => left(c) && right(c)
+provide let (&.) = (left: CodePointPredicate, right: CodePointPredicate) =>
+  (c: CodePoint) => left(c) && right(c)
 
 provide let exactly = (c: CodePoint) => (c2: CodePoint) => c == c2
-provide let range = (start: CodePoint, end: CodePoint) => (c: CodePoint) => c >= start && c <= end
+provide let range = (start: CodePoint, end: CodePoint) =>
+  (c: CodePoint) => c >= start && c <= end
 
 let _a = Char.code('a')
 let _b = Char.code('b')
@@ -102,17 +94,20 @@ let _right_brace = Char.code('}')
 let _left_brace = Char.code('{')
 let _comma = Char.code(',')
 
-let reserved_symbols = Set.Immutable.fromList([
-  _right_bracket,
-  _left_bracket,
-  _right_paren,
-  _left_paren,
-  _right_brace,
-  _left_brace,
-  _comma,
-])
+let reserved_symbols = Set.Immutable.fromList(
+  [
+    _right_bracket,
+    _left_bracket,
+    _right_paren,
+    _left_paren,
+    _right_brace,
+    _left_brace,
+    _comma,
+  ]
+)
 
-let is_reserved_symbol = (c: CodePoint) => Set.Immutable.contains(c, reserved_symbols)
+let is_reserved_symbol = (c: CodePoint) =>
+  Set.Immutable.contains(c, reserved_symbols)
 
 // Multi Character Symbols
 let _hyphen = Char.code('-')
@@ -139,33 +134,36 @@ let _semicolon = Char.code(';')
 let _colon = Char.code(':')
 let _tilde = Char.code('~')
 
-let multi_char_symbols = Set.Immutable.fromList([
-  _hyphen,
-  _dot,
-  _slash,
-  _backslash,
-  _pipe,
-  _forward_slash,
-  _exclamation,
-  _question,
-  _at,
-  _hash,
-  _dollar,
-  _percent,
-  _caret,
-  _ampersand,
-  _asterisk,
-  _plus,
-  _minus,
-  _equals,
-  _less_than,
-  _greater_than,
-  _semicolon,
-  _colon,
-  _tilde,
-])
+let multi_char_symbols = Set.Immutable.fromList(
+  [
+    _hyphen,
+    _dot,
+    _slash,
+    _backslash,
+    _pipe,
+    _forward_slash,
+    _exclamation,
+    _question,
+    _at,
+    _hash,
+    _dollar,
+    _percent,
+    _caret,
+    _ampersand,
+    _asterisk,
+    _plus,
+    _minus,
+    _equals,
+    _less_than,
+    _greater_than,
+    _semicolon,
+    _colon,
+    _tilde,
+  ]
+)
 
-let is_multi_char_symbol = (c: CodePoint) => Set.Immutable.contains(c, multi_char_symbols)
+let is_multi_char_symbol = (c: CodePoint) =>
+  Set.Immutable.contains(c, multi_char_symbols)
 
 // whitespace
 let _carriage_return = Char.code('\r')
@@ -211,7 +209,6 @@ provide let is_whitespace = exactly(_tab)
   |. exactly(_hsp)
   |. exactly(_nnbsp)
   |. exactly(_mssp)
-
 
 provide let is_0 = exactly(_0)
 
@@ -269,11 +266,11 @@ let code_points_to_string = (code_points: List<CodePoint>) => {
   let string_size = List.reduce(
     (acc, code_point) => sizeof_codepoint(code_point) + acc,
     0,
-    code_points,
+    code_points
   )
-  
+
   let buffer = Buffer.make(string_size)
-  
+
   List.reduce(
     (buffer, code_point) => match (sizeof_codepoint(code_point)) {
       1 => {
@@ -281,36 +278,38 @@ let code_points_to_string = (code_points: List<CodePoint>) => {
         buffer
       },
       2 => {
-        let first = Uint8.fromNumber(0b11000000 | (code_point >> 6))
-        let second = Uint8.fromNumber(0b10000000 | (code_point & 0b00111111))
+        let first = Uint8.fromNumber(0b11000000 | code_point >> 6)
+        let second = Uint8.fromNumber(0b10000000 | code_point & 0b00111111)
         Buffer.addUint8(first, buffer)
         Buffer.addUint8(second, buffer)
         buffer
       },
       3 => {
-        let first = Uint8.fromNumber(0b11100000 | (code_point >> 12))
-        let second = Uint8.fromNumber(0b10000000 | ((code_point >> 6) & 0b00111111))
-        let third = Uint8.fromNumber(0b10000000 | (code_point & 0b00111111))
+        let first = Uint8.fromNumber(0b11100000 | code_point >> 12)
+        let second = Uint8.fromNumber(0b10000000 | code_point >> 6 & 0b00111111)
+        let third = Uint8.fromNumber(0b10000000 | code_point & 0b00111111)
         Buffer.addUint8(first, buffer)
         Buffer.addUint8(second, buffer)
         Buffer.addUint8(third, buffer)
         buffer
       },
       4 => {
-        let first = Uint8.fromNumber(0b11110000 | (code_point >> 18))
-        let second = Uint8.fromNumber(0b10000000 | ((code_point >> 12) & 0b00111111))
-        let third = Uint8.fromNumber(0b10000000 | ((code_point >> 6) & 0b00111111))
-        let fourth = Uint8.fromNumber(0b10000000 | (code_point & 0b00111111))
+        let first = Uint8.fromNumber(0b11110000 | code_point >> 18)
+        let second = Uint8.fromNumber(
+          0b10000000 | code_point >> 12 & 0b00111111
+        )
+        let third = Uint8.fromNumber(0b10000000 | code_point >> 6 & 0b00111111)
+        let fourth = Uint8.fromNumber(0b10000000 | code_point & 0b00111111)
         Buffer.addUint8(first, buffer)
         Buffer.addUint8(second, buffer)
         Buffer.addUint8(third, buffer)
         Buffer.addUint8(fourth, buffer)
         buffer
       },
-      _ => fail "Invalid code point: " ++ toString(code_point)
+      _ => fail "Invalid code point: " ++ toString(code_point),
     },
     buffer,
-    code_points,
+    code_points
   )
 
   Buffer.toString(buffer)
@@ -352,7 +351,7 @@ let charCodeAt = (offset: Number, input: String) => {
     },
     first when (first &. 0b11100000n) ==. 0b11000000n => {
       let second = load8U(ptr, _STR_DATA_OFFSET +. offset +. 1n)
-      result =  (first &. 0b00011111n) <<. 6n |. (second &. 0b00111111n)
+      result = (first &. 0b00011111n) <<. 6n |. second &. 0b00111111n
       advance = 2n
     },
     first when (first &. 0b11110000n) ==. 0b11100000n => {
@@ -360,7 +359,7 @@ let charCodeAt = (offset: Number, input: String) => {
       let third = load8U(ptr, _STR_DATA_OFFSET +. offset +. 2n)
       result = (first &. 0b00001111n) <<. 12n
         |. (second &. 0b00111111n) <<. 6n
-        |. (third &. 0b00111111n)
+        |. third &. 0b00111111n
       advance = 3n
     },
     first when (first &. 0b11111000n) ==. 0b11110000n => {
@@ -370,17 +369,18 @@ let charCodeAt = (offset: Number, input: String) => {
       result = (first &. 0b00000111n) <<. 18n
         |. (second &. 0b00111111n) <<. 12n
         |. (third &. 0b00111111n) <<. 6n
-        |. (fourth &. 0b00111111n)
+        |. fourth &. 0b00111111n
       advance = 4n
     },
-    _otherwise => fail "Invalid UTF-8 sequence: " ++ toString(wasmI32ToNumber(first)),
-  } 
+    _otherwise =>
+      fail "Invalid UTF-8 sequence: " ++ toString(wasmI32ToNumber(first)),
+  }
   ignore(input)
 
   match (result) {
     result when result >=. 0xD800n && result <=. 0xDFFFn => {
       let value = wasmI32ToNumber(advance)
-      (0xFFFD : CodePoint, value)
+      (0xFFFD: CodePoint, value)
     },
     result => {
       let value = wasmI32ToNumber(result)
@@ -426,7 +426,7 @@ provide let to_codepoint_iter = (input: String) => {
         let result = (code_point, offset)
         let next_state = (input, offset + advance, length)
         if (offset + advance <= length) {
-          Some((next_state, result)) 
+          Some((next_state, result))
         } else {
           None
         }
@@ -438,28 +438,30 @@ provide let to_codepoint_iter = (input: String) => {
 }
 
 let decimal_codepoint_to_bigint = (code_point: CodePoint) => {
-  assert(is_digit(code_point))
+  assert is_digit(code_point)
   BigInt.fromNumber(code_point - _0)
 }
 
 let hex_codepoint_to_bigint = (code_point: CodePoint) => {
   use BigInt.{ (+) as (+.), fromNumber }
-  assert(is_hex(code_point))
+  assert is_hex(code_point)
   match (code_point) {
     _ when is_digit(code_point) => BigInt.fromNumber(code_point - _0),
-    _ when is_lower_hex_letter(code_point) => fromNumber(code_point - _a) +. 10t,
-    _ when is_upper_hex_letter(code_point) => fromNumber(code_point - _A) +. 10t,
+    _ when is_lower_hex_letter(code_point) =>
+      fromNumber(code_point - _a) +. 10t,
+    _ when is_upper_hex_letter(code_point) =>
+      fromNumber(code_point - _A) +. 10t,
     _ => fail "Not a hex letter: " ++ toString(code_point),
   }
 }
 
 let octal_codepoint_to_bigint = (code_point: CodePoint) => {
-  assert(is_octal(code_point))
+  assert is_octal(code_point)
   BigInt.fromNumber(code_point - _0)
 }
 
 let binary_codepoint_to_bigint = (code_point: CodePoint) => {
-  assert(is_binary(code_point))
+  assert is_binary(code_point)
   BigInt.fromNumber(code_point - _0)
 }
 
@@ -491,20 +493,27 @@ provide type CodePointAccumulator = (TokenState, Number)
 
 provide let code_point_transformer = (
   code_points: Iter<(CodePoint, Number)>,
-  map_token = identity,
+  map_token=identity,
 ) => {
   let iterator = Iter.transform(
     (state, (code_point, offset)) => match (state) {
       // Starting state
       Start => match (void) {
         _ when is_whitespace(code_point) => Continue(LexWhitespace(offset)),
-        _ when is_id_start(code_point) => Continue(LexName([code_point], offset)),
-        _ when is_type_start(code_point) => Continue(LexType([code_point], offset)),
+        _ when is_id_start(code_point) =>
+          Continue(LexName([code_point], offset)),
+        _ when is_type_start(code_point) =>
+          Continue(LexType([code_point], offset)),
         _ when is_0(code_point) => Continue(LexZeroStart(offset, false)),
-        _ when is_digit(code_point) => Continue(LexDecimal(offset, false, decimal_codepoint_to_bigint(code_point))),
+        _ when is_digit(code_point) =>
+          Continue(
+            LexDecimal(offset, false, decimal_codepoint_to_bigint(code_point)),
+          ),
         _ when is_minus(code_point) => Continue(LexMinus(offset)),
-        _ when is_multi_char_symbol(code_point) => Continue(LexMultiCharSymbol(offset, [code_point])),
-        _ when is_reserved_symbol(code_point) => Yield(Symbol(code_points_to_string([code_point]), offset), Start),
+        _ when is_multi_char_symbol(code_point) =>
+          Continue(LexMultiCharSymbol(offset, [code_point])),
+        _ when is_reserved_symbol(code_point) =>
+          Yield(Symbol(code_points_to_string([code_point]), offset), Start),
         _ => Continue(UnknownTokenKind(offset)),
       },
 
@@ -516,15 +525,23 @@ provide let code_point_transformer = (
 
       // Lexing a name token
       LexName(code_points, offset) => match (void) {
-        _ when is_id_continue(code_point) => Continue(LexName([code_point, ...code_points], offset)),
-        _ => YieldRetry(Name(code_points_to_string(List.reverse(code_points)), offset), Start),
+        _ when is_id_continue(code_point) =>
+          Continue(LexName([code_point, ...code_points], offset)),
+        _ =>
+          YieldRetry(
+            Name(code_points_to_string(List.reverse(code_points)), offset),
+            Start,
+          ),
       },
-
       LexType(code_points, offset) => match (void) {
-        _ when is_type_continue(code_point) => Continue(LexType([code_point, ...code_points], offset)),
-        _ => YieldRetry(Type(code_points_to_string(List.reverse(code_points)), offset), Start),
+        _ when is_type_continue(code_point) =>
+          Continue(LexType([code_point, ...code_points], offset)),
+        _ =>
+          YieldRetry(
+            Type(code_points_to_string(List.reverse(code_points)), offset),
+            Start,
+          ),
       },
-
       LexZeroStart(offset, negative) => match (void) {
         _ when is_x(code_point) => Continue(LexHex(offset, negative, 0t)),
         _ when is_o(code_point) => Continue(LexOctal(offset, negative, 0t)),
@@ -539,35 +556,59 @@ provide let code_point_transformer = (
         },
         _ => Retry(FinalizeInteger(offset, false, 0t)),
       },
-      
       LexHex(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
-          _ when is_hex(code_point) => Continue(LexHex(offset, negative, value *. 16t +. hex_codepoint_to_bigint(code_point))),
+          _ when is_hex(code_point) =>
+            Continue(
+              LexHex(
+                offset,
+                negative,
+                value *. 16t +. hex_codepoint_to_bigint(code_point),
+              ),
+            ),
           _ => Retry(FinalizeInteger(offset, negative, value)),
         }
       },
-
       LexOctal(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (code_point) {
-          _ when is_octal(code_point) => Continue(LexOctal(offset, negative, value *. 8t +. octal_codepoint_to_bigint(code_point))),
+          _ when is_octal(code_point) =>
+            Continue(
+              LexOctal(
+                offset,
+                negative,
+                value *. 8t +. octal_codepoint_to_bigint(code_point),
+              ),
+            ),
           _ => Retry(FinalizeInteger(offset, negative, value)),
         }
       },
-
       LexBinary(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
-          _ when is_binary(code_point) => Continue(LexBinary(offset, negative, value *. 2t +. binary_codepoint_to_bigint(code_point))),
+          _ when is_binary(code_point) =>
+            Continue(
+              LexBinary(
+                offset,
+                negative,
+                value *. 2t +. binary_codepoint_to_bigint(code_point),
+              ),
+            ),
           _ => Retry(FinalizeInteger(offset, negative, value)),
         }
       },
-
       LexDecimal(offset, negative, value) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
-          _ when is_digit(code_point) => Continue(LexDecimal(offset, negative, value *. 10t +. decimal_codepoint_to_bigint(code_point))),
+          _ when is_digit(code_point) =>
+            Continue(
+              LexDecimal(
+                offset,
+                negative,
+                value *. 10t +. decimal_codepoint_to_bigint(code_point),
+              ),
+            ),
           _ when is_dot(code_point) => {
             let buffer = Buffer.make(1024)
             if (negative) {
@@ -579,23 +620,29 @@ provide let code_point_transformer = (
           _ => Retry(FinalizeInteger(offset, negative, value)),
         }
       },
-
       LexMinus(offset) => match (void) {
         _ when is_0(code_point) => Continue(LexZeroStart(offset, true)),
-        _ when is_digit(code_point) => Continue(LexDecimal(offset, true, decimal_codepoint_to_bigint(code_point))),
-        _ when is_multi_char_symbol(code_point) => Continue(LexMultiCharSymbol(offset, [code_point, _minus])),
+        _ when is_digit(code_point) =>
+          Continue(
+            LexDecimal(offset, true, decimal_codepoint_to_bigint(code_point)),
+          ),
+        _ when is_multi_char_symbol(code_point) =>
+          Continue(LexMultiCharSymbol(offset, [code_point, _minus])),
         // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
         // with a new state.
         _ => YieldRetry(Symbol("-", offset), Start),
       },
-
       LexMultiCharSymbol(offset, code_points) => match (void) {
-        _ when is_multi_char_symbol(code_point) => Continue(LexMultiCharSymbol(offset, [code_point, ...code_points])),
+        _ when is_multi_char_symbol(code_point) =>
+          Continue(LexMultiCharSymbol(offset, [code_point, ...code_points])),
         // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
         // with a new state.
-        _ => YieldRetry(Symbol(code_points_to_string(List.reverse(code_points)), offset), Start),
+        _ =>
+          YieldRetry(
+            Symbol(code_points_to_string(List.reverse(code_points)), offset),
+            Start,
+          ),
       },
-
       LexFloatFractionPartStart(offset, buffer) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
@@ -621,12 +668,12 @@ provide let code_point_transformer = (
           },
           // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
           _ => match (Atof.parseFloat(Buffer.toString(buffer))) {
-            Ok(value) => YieldRetry(Float(Float64.fromNumber(value), offset), Start),// with a new state.
+            Ok(value) =>
+              YieldRetry(Float(Float64.fromNumber(value), offset), Start), // with a new state.
             Err(t) => Retry(UnknownTokenKind(offset)),
           },
         }
       },
-
       LexFloatExponentPartMaybeNegative(offset, buffer) => {
         match (void) {
           _ when is_plus(code_point) => {
@@ -644,7 +691,6 @@ provide let code_point_transformer = (
           _ => Continue(UnknownTokenKind(offset)),
         }
       },
-
       LexFloatExponentPartStart(offset, buffer) => match (void) {
         _ when is_digit(code_point) => {
           Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
@@ -652,7 +698,6 @@ provide let code_point_transformer = (
         },
         _ => Continue(UnknownTokenKind(offset)),
       },
-
       LexFloatExponentPart(offset, buffer) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
@@ -663,35 +708,42 @@ provide let code_point_transformer = (
           // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
           // with a new state.
           _ => match (Atof.parseFloat(Buffer.toString(buffer))) {
-            Ok(value) => YieldRetry(Float(Float64.fromNumber(value), offset), Start),
+            Ok(value) =>
+              YieldRetry(Float(Float64.fromNumber(value), offset), Start),
             Err(t) => Retry(UnknownTokenKind(offset)),
-          }, 
+          },
         }
       },
-
       FinalizeInteger(offset, negative, value) => {
         use BigInt.{ neg as (-) }
         let value = if (negative) (-)(value) else value
         match (void) {
-          _ when is_u(code_point) => Continue(FinalizeIntegerUnsigned(offset, negative, value)),
-          _ when is_s(code_point) => Yield(Integer(value, true, 8, offset), Start),
-          _ when is_S(code_point) => Yield(Integer(value, true, 16, offset), Start),
-          _ when is_l(code_point) => Yield(Integer(value, true, 32, offset), Start),
-          _ when is_L(code_point) => Yield(Integer(value, true, 64, offset), Start),
+          _ when is_u(code_point) =>
+            Continue(FinalizeIntegerUnsigned(offset, negative, value)),
+          _ when is_s(code_point) =>
+            Yield(Integer(value, true, 8, offset), Start),
+          _ when is_S(code_point) =>
+            Yield(Integer(value, true, 16, offset), Start),
+          _ when is_l(code_point) =>
+            Yield(Integer(value, true, 32, offset), Start),
+          _ when is_L(code_point) =>
+            Yield(Integer(value, true, 64, offset), Start),
           _ => YieldRetry(Integer(value, true, 32, offset), Start),
         }
       },
-
       FinalizeIntegerUnsigned(offset, negative, value) => {
         match (void) {
-          _ when is_s(code_point) => Yield(Integer(value, false, 8, offset), Start),
-          _ when is_S(code_point) => Yield(Integer(value, false, 16, offset), Start),
-          _ when is_l(code_point) => Yield(Integer(value, false, 32, offset), Start),
-          _ when is_L(code_point) => Yield(Integer(value, false, 64, offset), Start),
+          _ when is_s(code_point) =>
+            Yield(Integer(value, false, 8, offset), Start),
+          _ when is_S(code_point) =>
+            Yield(Integer(value, false, 16, offset), Start),
+          _ when is_l(code_point) =>
+            Yield(Integer(value, false, 32, offset), Start),
+          _ when is_L(code_point) =>
+            Yield(Integer(value, false, 64, offset), Start),
           _ => Continue(UnknownTokenKind(offset)),
         }
       },
-
       UnknownTokenKind(offset) => match (code_point) {
         _ when !is_whitespace(code_point) => Continue(UnknownTokenKind(offset)),
         _ => YieldRetry(Unknown(offset), Start),
@@ -699,50 +751,64 @@ provide let code_point_transformer = (
     },
     Start,
     code_points,
-    flush = (state) => {
+    flush=state => {
       use BigInt.{ neg as (-) }
       match (state) {
         Start => None,
         LexWhitespace(offset) => Some(Whitespace(offset)),
-        LexName(code_points, offset) => Some(Name(code_points_to_string(List.reverse(code_points)), offset)),
-        LexType(code_points, offset) => Some(Type(code_points_to_string(List.reverse(code_points)), offset)),
+        LexName(code_points, offset) =>
+          Some(Name(code_points_to_string(List.reverse(code_points)), offset)),
+        LexType(code_points, offset) =>
+          Some(Type(code_points_to_string(List.reverse(code_points)), offset)),
         LexMinus(offset) => Some(Symbol("-", offset)),
         // Whenever we encounter a `0`, it could be followed by a hex, octal, or binary number.
         // Or it could just be `0`
         LexZeroStart(offset, negative) => Some(Integer(0t, true, 32, offset)), // Offset, negative
-        LexHex(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)), // Offset, negative, value
-        LexOctal(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
-        LexBinary(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
-        LexDecimal(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
+        LexHex(offset, negative, value) =>
+          Some(Integer(if (negative) (-)(value) else value, true, 32, offset)), // Offset, negative, value
+        LexOctal(offset, negative, value) =>
+          Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
+        LexBinary(offset, negative, value) =>
+          Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
+        LexDecimal(offset, negative, value) =>
+          Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
         LexFloatFractionPartStart(offset, _buffer) => Some(Unknown(offset)), // e.x. "123."
-        LexFloatFractionPart(offset, buffer) => match (Atof.parseFloat(Buffer.toString(buffer))) {
-          Ok(value) => Some(Float(Float64.fromNumber(value), offset)),
-          Err(t) => Some(Unknown(offset)),
-        },
-        LexFloatExponentPartMaybeNegative(offset, _buffer) => Some(Unknown(offset)), // offset, negative, integer, fraction
+        LexFloatFractionPart(offset, buffer) =>
+          match (Atof.parseFloat(Buffer.toString(buffer))) {
+            Ok(value) => Some(Float(Float64.fromNumber(value), offset)),
+            Err(t) => Some(Unknown(offset)),
+          },
+        LexFloatExponentPartMaybeNegative(offset, _buffer) =>
+          Some(Unknown(offset)), // offset, negative, integer, fraction
         LexFloatExponentPartStart(offset, _buffer) => Some(Unknown(offset)),
-        LexFloatExponentPart(offset, buffer) => match (Atof.parseFloat(Buffer.toString(buffer))) {
-          Ok(value) => Some(Float(Float64.fromNumber(value), offset)),
-          Err(t) => Some(Unknown(offset)),
-        },
+        LexFloatExponentPart(offset, buffer) =>
+          match (Atof.parseFloat(Buffer.toString(buffer))) {
+            Ok(value) => Some(Float(Float64.fromNumber(value), offset)),
+            Err(t) => Some(Unknown(offset)),
+          },
         FinalizeInteger(offset, negative, value) =>
           Some(Integer(if (negative) (-)(value) else value, true, 32, offset)), // Offset, value
-        FinalizeIntegerUnsigned(offset, _negative, _value) => Some(Unknown(offset)), // e.x. "32u" (missing kind)
-        LexMultiCharSymbol(offset, code_points) => Some(Symbol(code_points_to_string(List.reverse(code_points)), offset)), // Offset, code points
+        FinalizeIntegerUnsigned(offset, _negative, _value) =>
+          Some(Unknown(offset)), // e.x. "32u" (missing kind)
+        LexMultiCharSymbol(offset, code_points) =>
+          Some(Symbol(code_points_to_string(List.reverse(code_points)), offset)), // Offset, code points
         UnknownTokenKind(offset) => Some(Unknown(offset)),
+      }
     }
-  })
+  )
 
   Iter.map(map_token, iterator)
 }
 
 provide let lex = (
   input: String,
-  keywords: Set<String> = Set.Immutable.fromList([]),
-) => code_point_transformer(
-  to_codepoint_iter(input),
-  map_token = (token) => match (token) {
-    Name(name, offset) when Set.Immutable.contains(name, keywords) => Keyword(name, offset),
-    t => t,
-  },
-)
+  keywords: Set<String>=Set.Immutable.fromList([]),
+) =>
+  code_point_transformer(
+    to_codepoint_iter(input),
+    map_token=token => match (token) {
+      Name(name, offset) when Set.Immutable.contains(name, keywords) =>
+        Keyword(name, offset),
+      t => t,
+    }
+  )
