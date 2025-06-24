@@ -17,12 +17,20 @@ from "runtime/numbers" include Numbers
 from "./upper.gr" include Upper
 from "./lower.gr" include Lower
 from "runtime/unsafe/conv" include Conv
+from "buffer" include Buffer
+from "float64" include Float64
+from "runtime/atof/parse" include Parse as Atof
 
 use Upper.{ upper_set }
 use Lower.{ lower_set }
 use Set.Immutable.{ type Set } 
-use Iter.{ type Iter, type IterResult }
+use Iter.{ type Iter, type IterResult,
+state,
+return_,
+yield_,
+}
 use Conv.{ wasmI32ToNumber }
+use Buffer.{ type Buffer }
 
 provide type CodePoint = Number
 
@@ -32,9 +40,9 @@ provide enum Token {
   Symbol(String, Number),
   Keyword(String, Number),
   // negative, value, signed, size, offset 
-  Integer(Bool, BigInt, Bool, Number, Number),
+  Integer(BigInt, Bool, Number, Number),
   // negative, integer, decimal, exponent_negative, exponent, offset
-  Float(Bool, BigInt, BigInt, Bool, BigInt, Number),
+  Float(Float64, Number),
   Whitespace(Number),
   Unknown(Number),
   EOF(Number),
@@ -468,11 +476,11 @@ provide enum TokenState {
   LexOctal(Number, Bool, BigInt),
   LexBinary(Number, Bool, BigInt),
   LexDecimal(Number, Bool, BigInt),
-  LexFloatFractionPartStart(Number, Bool, BigInt), // offset, negative, integer
-  LexFloatFractionPart(Number, Bool, BigInt, BigInt), // offset, negative, integer, fraction
-  LexFloatExponentPartMaybeNegative(Number, Bool, BigInt, BigInt), // offset, negative, integer, fraction
-  LexFloatExponentPartStart(Number, Bool, BigInt, BigInt, Bool), // offset, negative, integer, fraction, exponent_negative
-  LexFloatExponentPart(Number, Bool, BigInt, BigInt, Bool, BigInt), // offset, negative, integer, fraction, negative_exponent, exponent
+  LexFloatFractionPartStart(Number, Buffer), // offset, pointer, integer
+  LexFloatFractionPart(Number, Buffer), // offset, negative, integer, fraction
+  LexFloatExponentPartMaybeNegative(Number, Buffer), // offset, negative, integer, fraction
+  LexFloatExponentPartStart(Number, Buffer), // offset, negative, integer, fraction, exponent_negative
+  LexFloatExponentPart(Number, Buffer), // offset, negative, integer, fraction, negative_exponent, exponent
   FinalizeInteger(Number, Bool, BigInt), // Offset, value
   FinalizeIntegerUnsigned(Number, Bool, BigInt), // Offset, value
   LexMultiCharSymbol(Number, List<CodePoint>), // Offset, code points
@@ -521,7 +529,14 @@ provide let code_point_transformer = (
         _ when is_x(code_point) => Continue(LexHex(offset, negative, 0t)),
         _ when is_o(code_point) => Continue(LexOctal(offset, negative, 0t)),
         _ when is_b(code_point) => Continue(LexBinary(offset, negative, 0t)),
-        _ when is_dot(code_point) => Continue(LexFloatFractionPartStart(offset, false, 0t)),
+        _ when is_dot(code_point) => {
+          let buffer = Buffer.make(1024)
+          if (negative) {
+            Buffer.addUint8(Uint8.fromNumber(_minus), buffer)
+          }
+          Buffer.addUint8(Uint8.fromNumber(_0), buffer)
+          Continue(LexFloatFractionPartStart(offset, buffer))
+        },
         _ => Retry(FinalizeInteger(offset, false, 0t)),
       },
       
@@ -553,7 +568,14 @@ provide let code_point_transformer = (
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
           _ when is_digit(code_point) => Continue(LexDecimal(offset, negative, value *. 10t +. decimal_codepoint_to_bigint(code_point))),
-          _ when is_dot(code_point) => Continue(LexFloatFractionPartStart(offset, false, value)),
+          _ when is_dot(code_point) => {
+            let buffer = Buffer.make(1024)
+            if (negative) {
+              Buffer.addUint8(Uint8.fromNumber(_minus), buffer)
+            }
+            Buffer.addString(toString(value), buffer)
+            Continue(LexFloatFractionPartStart(offset, buffer))
+          },
           _ => Retry(FinalizeInteger(offset, negative, value)),
         }
       },
@@ -574,68 +596,98 @@ provide let code_point_transformer = (
         _ => YieldRetry(Symbol(code_points_to_string(List.reverse(code_points)), offset), Start),
       },
 
-      LexFloatFractionPartStart(offset, negative, integer) => {
+      LexFloatFractionPartStart(offset, buffer) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
-          _ when is_digit(code_point) =>
-            Continue(LexFloatFractionPart(offset, negative, integer, decimal_codepoint_to_bigint(code_point))),
+          _ when is_digit(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatFractionPart(offset, buffer))
+          },
           _ => Continue(UnknownTokenKind(offset)),
         }
       },
 
       // Floats
-      LexFloatFractionPart(offset, negative, integer, fraction) => {
+      LexFloatFractionPart(offset, buffer) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
         match (void) {
-          _ when is_digit(code_point) => Continue(LexFloatFractionPart(offset, negative, integer, fraction *. 10t +. decimal_codepoint_to_bigint(code_point))),
-          _ when is_e(code_point) => Continue(LexFloatExponentPartMaybeNegative(offset, negative, integer, fraction)),
+          _ when is_digit(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatFractionPart(offset, buffer))
+          },
+          _ when is_e(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatExponentPartMaybeNegative(offset, buffer))
+          },
           // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
-          _ => YieldRetry(Float(negative, integer, fraction, false, 0t, offset), Start), // with a new state.
+          _ => match (Atof.parseFloat(Buffer.toString(buffer))) {
+            Ok(value) => YieldRetry(Float(Float64.fromNumber(value), offset), Start),// with a new state.
+            Err(t) => Retry(UnknownTokenKind(offset)),
+          },
         }
       },
 
-      LexFloatExponentPartMaybeNegative(offset, negative, integer, fraction) => {
+      LexFloatExponentPartMaybeNegative(offset, buffer) => {
         match (void) {
-          _ when is_plus(code_point) => Continue(LexFloatExponentPartStart(offset, negative, integer, fraction, false)),
-          _ when is_minus(code_point) => Continue(LexFloatExponentPartStart(offset, negative, integer, fraction, true)),
-          _ when is_digit(code_point) => Continue(LexFloatExponentPart(offset, negative, integer, fraction, false, decimal_codepoint_to_bigint(code_point))),
+          _ when is_plus(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatExponentPartStart(offset, buffer))
+          },
+          _ when is_minus(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatExponentPartStart(offset, buffer))
+          },
+          _ when is_digit(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatExponentPart(offset, buffer))
+          },
           _ => Continue(UnknownTokenKind(offset)),
         }
       },
 
-      LexFloatExponentPartStart(offset, negative, integer, fraction, exponent_negative) => match (void) {
-        _ when is_digit(code_point) => Continue(LexFloatExponentPart(offset, negative, integer, fraction, exponent_negative, decimal_codepoint_to_bigint(code_point))),
+      LexFloatExponentPartStart(offset, buffer) => match (void) {
+        _ when is_digit(code_point) => {
+          Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+          Continue(LexFloatExponentPart(offset, buffer))
+        },
         _ => Continue(UnknownTokenKind(offset)),
       },
 
-      LexFloatExponentPart(offset, negative, integer, fraction, negative_exponent, exponent) => {
+      LexFloatExponentPart(offset, buffer) => {
         use BigInt.{ (+) as (+.), (*) as (*.) }
-        match (code_point) {
-          _ when is_digit(code_point) =>
-            Continue(LexFloatExponentPart(offset, negative, integer, fraction, negative_exponent, exponent *. 10t +. decimal_codepoint_to_bigint(code_point))),
+        match (void) {
+          _ when is_digit(code_point) => {
+            Buffer.addUint8(Uint8.fromNumber(code_point), buffer)
+            Continue(LexFloatExponentPart(offset, buffer))
+          },
           // Whatever follows needs to be "re-lexed," so yield the symbol, but retry the current value
           // with a new state.
-          _ => YieldRetry(Float(negative, integer, fraction, negative_exponent, exponent, offset), Start),
+          _ => match (Atof.parseFloat(Buffer.toString(buffer))) {
+            Ok(value) => YieldRetry(Float(Float64.fromNumber(value), offset), Start),
+            Err(t) => Retry(UnknownTokenKind(offset)),
+          }, 
         }
       },
 
       FinalizeInteger(offset, negative, value) => {
-        match (code_point) {
+        use BigInt.{ neg as (-) }
+        let value = if (negative) (-)(value) else value
+        match (void) {
           _ when is_u(code_point) => Continue(FinalizeIntegerUnsigned(offset, negative, value)),
-          _ when is_s(code_point) => Yield(Integer(negative, value, true, 8, offset), Start),
-          _ when is_S(code_point) => Yield(Integer(negative, value, true, 16, offset), Start),
-          _ when is_l(code_point) => Yield(Integer(negative, value, true, 32, offset), Start),
-          _ when is_L(code_point) => Yield(Integer(negative, value, true, 64, offset), Start),
-          _ => YieldRetry(Integer(negative, value, true, 32, offset), Start),
+          _ when is_s(code_point) => Yield(Integer(value, true, 8, offset), Start),
+          _ when is_S(code_point) => Yield(Integer(value, true, 16, offset), Start),
+          _ when is_l(code_point) => Yield(Integer(value, true, 32, offset), Start),
+          _ when is_L(code_point) => Yield(Integer(value, true, 64, offset), Start),
+          _ => YieldRetry(Integer(value, true, 32, offset), Start),
         }
       },
 
       FinalizeIntegerUnsigned(offset, negative, value) => {
-        match (code_point) {
-          _ when is_s(code_point) => Yield(Integer(negative, value, false, 8, offset), Start),
-          _ when is_S(code_point) => Yield(Integer(negative, value, false, 16, offset), Start),
-          _ when is_l(code_point) => Yield(Integer(negative, value, false, 32, offset), Start),
-          _ when is_L(code_point) => Yield(Integer(negative, value, false, 64, offset), Start),
+        match (void) {
+          _ when is_s(code_point) => Yield(Integer(value, false, 8, offset), Start),
+          _ when is_S(code_point) => Yield(Integer(value, false, 16, offset), Start),
+          _ when is_l(code_point) => Yield(Integer(value, false, 32, offset), Start),
+          _ when is_L(code_point) => Yield(Integer(value, false, 64, offset), Start),
           _ => Continue(UnknownTokenKind(offset)),
         }
       },
@@ -647,7 +699,9 @@ provide let code_point_transformer = (
     },
     Start,
     code_points,
-    flush = (state) => match (state) {
+    flush = (state) => {
+      use BigInt.{ neg as (-) }
+      match (state) {
         Start => None,
         LexWhitespace(offset) => Some(Whitespace(offset)),
         LexName(code_points, offset) => Some(Name(code_points_to_string(List.reverse(code_points)), offset)),
@@ -655,25 +709,29 @@ provide let code_point_transformer = (
         LexMinus(offset) => Some(Symbol("-", offset)),
         // Whenever we encounter a `0`, it could be followed by a hex, octal, or binary number.
         // Or it could just be `0`
-        LexZeroStart(offset, negative) => Some(Integer(negative, 0t, true, 32, offset)), // Offset, negative
-        LexHex(offset, negative, value) => Some(Integer(negative, value, true, 32, offset)), // Offset, negative, value
-        LexOctal(offset, negative, value) => Some(Integer(negative, value, true, 32, offset)),
-        LexBinary(offset, negative, value) => Some(Integer(negative, value, true, 32, offset)),
-        LexDecimal(offset, negative, value) => Some(Integer(negative, value, true, 32, offset)),
-        LexFloatFractionPartStart(offset, _negative, _integer) => Some(Unknown(offset)), // e.x. "123."
-        LexFloatFractionPart(offset, negative, integer, fraction) =>
-          Some(Float(negative, integer, fraction, false, 0t, offset)), // offset, negative, integer, fraction
-        LexFloatExponentPartMaybeNegative(offset, _negative, _integer, _fraction) => Some(Unknown(offset)), // offset, negative, integer, fraction
-        LexFloatExponentPartStart(offset, _negative, _integer, _fraction, _exponent_negative) => Some(Unknown(offset)),
-        LexFloatExponentPart(offset, negative, integer, fraction, exponent_negative, exponent) =>
-          Some(Float(negative, integer, fraction, exponent_negative, exponent, offset)), // offset, negative, integer, fraction, negative_exponent, exponent
+        LexZeroStart(offset, negative) => Some(Integer(0t, true, 32, offset)), // Offset, negative
+        LexHex(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)), // Offset, negative, value
+        LexOctal(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
+        LexBinary(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
+        LexDecimal(offset, negative, value) => Some(Integer(if (negative) (-)(value) else value, true, 32, offset)),
+        LexFloatFractionPartStart(offset, _buffer) => Some(Unknown(offset)), // e.x. "123."
+        LexFloatFractionPart(offset, buffer) => match (Atof.parseFloat(Buffer.toString(buffer))) {
+          Ok(value) => Some(Float(Float64.fromNumber(value), offset)),
+          Err(t) => Some(Unknown(offset)),
+        },
+        LexFloatExponentPartMaybeNegative(offset, _buffer) => Some(Unknown(offset)), // offset, negative, integer, fraction
+        LexFloatExponentPartStart(offset, _buffer) => Some(Unknown(offset)),
+        LexFloatExponentPart(offset, buffer) => match (Atof.parseFloat(Buffer.toString(buffer))) {
+          Ok(value) => Some(Float(Float64.fromNumber(value), offset)),
+          Err(t) => Some(Unknown(offset)),
+        },
         FinalizeInteger(offset, negative, value) =>
-          Some(Integer(negative, value, true, 32, offset)), // Offset, value
+          Some(Integer(if (negative) (-)(value) else value, true, 32, offset)), // Offset, value
         FinalizeIntegerUnsigned(offset, _negative, _value) => Some(Unknown(offset)), // e.x. "32u" (missing kind)
         LexMultiCharSymbol(offset, code_points) => Some(Symbol(code_points_to_string(List.reverse(code_points)), offset)), // Offset, code points
         UnknownTokenKind(offset) => Some(Unknown(offset)),
     }
-  )
+  })
 
   Iter.map(map_token, iterator)
 }

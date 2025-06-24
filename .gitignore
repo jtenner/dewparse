@@ -3,6 +3,7 @@ src/**/*.gro
 src/**/*.mashtree
 src/**/*.modsig
 src/**/*.wasm
+src/**/*.wat
 
 # Grain build artifacts
 target

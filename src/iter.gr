@@ -26,13 +26,24 @@ provide let rec unfold = (
 })
 
 provide enum IterTransformResult<t_context, t_result> {
-  Continue(t_context),
-  Retry(t_context),
-  Yield(t_result, t_context),
-  YieldRetry(t_result, t_context),
-  Return(t_result),
-  Finish,
+  State{
+    context: t_context,
+    advance: Bool,
+  },
+  Yield{
+    value: t_result,
+    context: t_context,
+    advance: Bool,
+  },
+  Return{ value: Option<t_result> },
 }
+
+provide let state = (t_context: t_context, advance: Bool = true) =>
+  State{context: t_context, advance: advance}
+provide let return_ = (value: Option<t_value> = None) => Return{ value }
+provide let yield_ = (t_result: t_result, t_context: t_context, advance: Bool = true) =>
+  Yield{value: t_result, context: t_context, advance: advance}
+
 
 provide let rec transform = (
   fn: (t_context, t_value) => IterTransformResult<t_context, t_result>,
@@ -45,33 +56,35 @@ and do_transform = (
   t_context: t_context,
   t_iter_result: IterResult<t_value>,
   flush: (t_context) => Option<t_result>,
-) => {
+) =>
   match (t_iter_result) {
     Next(t_value, t_iter) => match (fn(t_context, t_value)) {
-      // Keep consuming the underlying iterator
-      Continue(t_context) => do_transform(fn, t_context, next(t_iter), flush),
-      // Retry the previous value with a new context state
-      Retry(t_context) => do_transform(fn, t_context, next(t_iter), flush),
-      // Yield return a transformed value
-      Yield(t_result, t_context) =>
-        Next(t_result, Iter(() => do_transform(fn, t_context, next(t_iter), flush))),
-      // Yield Retry returns the next transformed value, but retries the previous underlying value
-      // with a new state context
-      YieldRetry(t_result, t_context) =>
-        Next(t_result, Iter(() => do_transform(fn, t_context, t_iter_result, flush))),
-      // Return returns a final transformed value and ends the iterator
-      Return(t_result) => Next(t_result, Done),
-      // Finish ends the iterator if no more values can be produced
-      Finish => End,
+      Yield{
+        value: t_result,
+        context: t_context,
+        advance: false,
+      } => Next(t_result, Iter(() => do_transform(fn, t_context, t_iter_result, flush))),
+      Yield{
+        value: t_result,
+        context: t_context,
+        advance: true,
+      } => Next(t_result, Iter(() => do_transform(fn, t_context, next(t_iter), flush))),
+      State{
+        context: t_context,
+        advance: false,
+      } => do_transform(fn, t_context, t_iter_result, flush),
+      State{
+        context: t_context,
+        advance: true,
+      } => do_transform(fn, t_context, next(t_iter), flush),
+      Return{ value: Some(t_result) } => Next(t_result, Done),
+      Return{ value: None } => End,
     },
     End => match (flush(t_context)) {
-      // If the iterator ends but the transformer has not ended, flush the context
       Some(t_result) => Next(t_result, Done),
-      // If the iterator ends and the transformer has ended, end the iterator
       None => End,
     },
   }
-}
 
 provide let rec map = (
   fn: (t_value) => t_result,
@@ -86,9 +99,9 @@ provide let rec filter = (
   t_iter: Iter<t_value>,
 ) => transform(
   (t_context, t_value) => if (fn(t_value)) {
-    Yield(t_value, t_context)
+    Yield{ value: t_value, context: t_context, advance: true }
   } else {
-    Continue(t_context)
+    State{ context: t_context, advance: true }
   },
   void,
   t_iter,

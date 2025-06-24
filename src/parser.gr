@@ -2,5 +2,3 @@ module Parser
 from "./yarder.gr" include Yarder
 
 use Yarder.{ type Operator }
-
-let SelectOperator = RightUnaryOperator(".")

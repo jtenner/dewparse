@@ -255,3 +255,27 @@ provide let rec finalize = (yarder: Yarder<t_expression>) => {
     }
   }
 }
+
+provide let pop_value = (yarder: Yarder<t_expression>) => {
+  let Yarder{
+    expr_stack,
+    op_stack,
+    group_level,
+    prefix,
+    postfix,
+    binary,
+  } = yarder
+
+  match (expr_stack) {
+    [t_expression, ...expr_stack] => Ok((t_expression, Yarder{
+      expr_stack,
+      op_stack,
+      group_level,
+      prefix,
+      postfix,
+      binary,
+    })),
+    _ => Err("Value stack underflow."),
+  }
+}
+
