@@ -35,6 +35,7 @@ provide enum Token {
   Type(String, Number),
   Symbol(String, Number),
   Keyword(String, Number),
+  StringToken(String, Number),
   // value, signed, size, offset
   Integer(BigInt, Bool, Number, Number),
   Float(Float64, Number),
@@ -42,8 +43,6 @@ provide enum Token {
   Unknown(Number),
   EOF(Number),
 }
-
-provide type CodePointIter = Iter<(CodePoint, Number)>
 
 provide type CodePointPredicate = CodePoint => Bool
 
@@ -57,41 +56,43 @@ provide let exactly = (c: CodePoint) => (c2: CodePoint) => c == c2
 provide let range = (start: CodePoint, end: CodePoint) =>
   (c: CodePoint) => c >= start && c <= end
 
-let _a = Char.code('a')
-let _b = Char.code('b')
-let _e = Char.code('e')
-let _f = Char.code('f')
-let _o = Char.code('o')
-let _x = Char.code('x')
-let _z = Char.code('z')
-
-let _A = Char.code('A')
-let _F = Char.code('F')
-let _Z = Char.code('Z')
-
-let _u = Char.code('u')
-let _s = Char.code('s')
-let _S = Char.code('S')
-let _l = Char.code('l')
-let _L = Char.code('L')
-
 let _0 = Char.code('0')
 let _1 = Char.code('1')
 let _7 = Char.code('7')
 let _9 = Char.code('9')
-let _underscore = Char.code('_')
-let _single_quote = Char.code('\'')
-let _double_quote = Char.code('"')
-let _backtick = Char.code('`')
+let _a = Char.code('a')
+let _A = Char.code('A')
+let _b = Char.code('b')
+let _e = Char.code('e')
+let _f = Char.code('f')
+let _F = Char.code('F')
+let _l = Char.code('l')
+let _L = Char.code('L')
+let _n = Char.code('n')
+let _o = Char.code('o')
+let _r = Char.code('r')
+let _s = Char.code('s')
+let _S = Char.code('S')
+let _t = Char.code('t')
+let _u = Char.code('u')
+let _v = Char.code('v')
+let _x = Char.code('x')
+let _z = Char.code('z')
+let _Z = Char.code('Z')
+
 
 // Single Character Reserved Symbols
-let _right_bracket = Char.code(']')
+let _backtick = Char.code('`')
+let _comma = Char.code(',')
+let _double_quote = Char.code('"')
+let _left_brace = Char.code('{')
 let _left_bracket = Char.code('[')
-let _right_paren = Char.code(')')
 let _left_paren = Char.code('(')
 let _right_brace = Char.code('}')
-let _left_brace = Char.code('{')
-let _comma = Char.code(',')
+let _right_bracket = Char.code(']')
+let _right_paren = Char.code(')')
+let _single_quote = Char.code('\'')
+let _underscore = Char.code('_')
 
 let reserved_symbols = Set.Immutable.fromList(
   [
@@ -109,28 +110,28 @@ let is_reserved_symbol = (c: CodePoint) =>
   Set.Immutable.contains(c, reserved_symbols)
 
 // Multi Character Symbols
-let _hyphen = Char.code('-')
-let _dot = Char.code('.')
-let _slash = Char.code('/')
-let _backslash = Char.code('\\')
-let _pipe = Char.code('|')
-let _forward_slash = Char.code('/')
-let _exclamation = Char.code('!')
-let _question = Char.code('?')
-let _at = Char.code('@')
-let _hash = Char.code('#')
-let _dollar = Char.code('$')
-let _percent = Char.code('%')
-let _caret = Char.code('^')
 let _ampersand = Char.code('&')
 let _asterisk = Char.code('*')
-let _plus = Char.code('+')
-let _minus = Char.code('-')
-let _equals = Char.code('=')
-let _less_than = Char.code('<')
-let _greater_than = Char.code('>')
-let _semicolon = Char.code(';')
+let _at = Char.code('@')
+let _backslash = Char.code('\\')
+let _caret = Char.code('^')
 let _colon = Char.code(':')
+let _dollar = Char.code('$')
+let _dot = Char.code('.')
+let _equals = Char.code('=')
+let _exclamation = Char.code('!')
+let _forward_slash = Char.code('/')
+let _greater_than = Char.code('>')
+let _hash = Char.code('#')
+let _hyphen = Char.code('-')
+let _less_than = Char.code('<')
+let _minus = Char.code('-')
+let _percent = Char.code('%')
+let _pipe = Char.code('|')
+let _plus = Char.code('+')
+let _question = Char.code('?')
+let _semicolon = Char.code(';')
+let _slash = Char.code('/')
 let _tilde = Char.code('~')
 
 let multi_char_symbols = Set.Immutable.fromList(
@@ -168,7 +169,10 @@ let is_multi_char_symbol = (c: CodePoint) =>
 let _carriage_return = Char.code('\r')
 let _sp = Char.code(' ')
 let _tab = Char.code('\t')
+let _vtab = Char.code('\v')
 let _newline = Char.code('\n')
+let _backspace = Char.code('\b')
+let _form_feed = Char.code('\f')
 let _nbsp = 0xA0
 let _osm = 0x2000
 let _enqd = 0x2001
@@ -190,6 +194,8 @@ provide let is_whitespace = exactly(_tab)
   |. exactly(_carriage_return)
   |. exactly(_sp)
   |. exactly(_nbsp)
+  |. exactly(_vtab)
+  |. exactly(_form_feed)
 
   // These codepoints are consecutive
   |. range(_osm, _thsp)
@@ -209,46 +215,77 @@ provide let is_whitespace = exactly(_tab)
   |. exactly(_nnbsp)
   |. exactly(_mssp)
 
-provide let is_0 = exactly(_0)
+provide let is_lower = (c: CodePoint) => Set.Immutable.contains(c, lower_set)
+provide let is_upper = (c: CodePoint) => Set.Immutable.contains(c, upper_set)
+
+provide let is_digit = range(_0, _9)
+provide let is_lower_hex_letter = range(_a, _f)
+provide let is_upper_hex_letter = range(_A, _F)
+provide let is_hex_letter = is_lower_hex_letter |. is_upper_hex_letter
+provide let is_hex = is_digit |. is_hex_letter
 
 provide let is_underscore = exactly(_underscore)
-provide let is_hyphen = exactly(_hyphen)
-provide let is_dot = exactly(_dot)
-provide let is_slash = exactly(_slash)
-provide let is_backslash = exactly(_backslash)
-provide let is_pipe = exactly(_pipe)
-provide let is_forward_slash = exactly(_forward_slash)
-provide let is_right_bracket = exactly(_right_bracket)
-provide let is_left_bracket = exactly(_left_bracket)
-provide let is_right_paren = exactly(_right_paren)
-provide let is_left_paren = exactly(_left_paren)
-provide let is_right_brace = exactly(_right_brace)
-provide let is_left_brace = exactly(_left_brace)
-provide let is_single_quote = exactly(_single_quote)
-provide let is_double_quote = exactly(_double_quote)
-provide let is_backtick = exactly(_backtick)
-provide let is_exclamation = exactly(_exclamation)
-provide let is_question = exactly(_question)
-provide let is_at = exactly(_at)
-provide let is_hash = exactly(_hash)
-provide let is_dollar = exactly(_dollar)
-provide let is_percent = exactly(_percent)
-provide let is_caret = exactly(_caret)
+provide let is_id_start = is_underscore |. is_lower
+provide let is_id_continue = is_id_start |. is_digit
+
+provide let is_0 = exactly(_0)
 provide let is_ampersand = exactly(_ampersand)
 provide let is_asterisk = exactly(_asterisk)
-provide let is_plus = exactly(_plus)
-provide let is_minus = exactly(_minus)
-provide let is_equals = exactly(_equals)
-provide let is_less_than = exactly(_less_than)
-provide let is_greater_than = exactly(_greater_than)
-provide let is_comma = exactly(_comma)
-provide let is_semicolon = exactly(_semicolon)
+provide let is_at = exactly(_at)
+provide let is_b = exactly(_b)
+provide let is_backslash = exactly(_backslash)
+provide let is_backtick = exactly(_backtick)
+provide let is_binary = exactly(_0) |. exactly(_1)
+provide let is_caret = exactly(_caret)
+provide let is_carriage_return = exactly(_carriage_return)
 provide let is_colon = exactly(_colon)
-provide let is_tilde = exactly(_tilde)
+provide let is_comma = exactly(_comma)
+provide let is_dollar = exactly(_dollar)
+provide let is_dot = exactly(_dot)
+provide let is_double_quote = exactly(_double_quote)
+provide let is_e = exactly(_e)
+provide let is_equals = exactly(_equals)
+provide let is_exclamation = exactly(_exclamation)
+provide let is_f = exactly(_f)
+provide let is_forward_slash = exactly(_forward_slash)
+provide let is_greater_than = exactly(_greater_than)
+provide let is_hash = exactly(_hash)
+provide let is_hyphen = exactly(_hyphen)
 
-provide let not = (pred: CodePointPredicate) => (c: CodePoint) => !pred(c)
-provide let is_even = (c: CodePoint) => (c & 1) == 0
-provide let is_odd = not(is_even)
+provide let is_l = exactly(_l)
+provide let is_L = exactly(_L)
+provide let is_left_brace = exactly(_left_brace)
+provide let is_left_bracket = exactly(_left_bracket)
+provide let is_left_paren = exactly(_left_paren)
+provide let is_less_than = exactly(_less_than)
+provide let is_letter = is_upper |. is_lower
+
+provide let is_minus = exactly(_minus)
+provide let is_n = exactly(_n)
+provide let is_newline = exactly(_newline)
+provide let is_o = exactly(_o)
+provide let is_octal = range(_0, _7)
+provide let is_percent = exactly(_percent)
+provide let is_pipe = exactly(_pipe)
+provide let is_plus = exactly(_plus)
+provide let is_question = exactly(_question)
+provide let is_r = exactly(_r)
+provide let is_right_brace = exactly(_right_brace)
+provide let is_right_bracket = exactly(_right_bracket)
+provide let is_right_paren = exactly(_right_paren)
+provide let is_s = exactly(_s)
+provide let is_S = exactly(_S)
+provide let is_semicolon = exactly(_semicolon)
+provide let is_single_quote = exactly(_single_quote)
+provide let is_slash = exactly(_slash)
+provide let is_t = exactly(_t)
+provide let is_tab = exactly(_tab)
+provide let is_tilde = exactly(_tilde)
+provide let is_type_continue = is_upper |. is_lower |. is_digit
+provide let is_type_start = is_upper
+provide let is_u = exactly(_u)
+provide let is_v = exactly(_v)
+provide let is_x = exactly(_x)
 
 let sizeof_codepoint = (code_point: CodePoint) => {
   if (code_point < 0x7F) {
@@ -389,33 +426,6 @@ let charCodeAt = (offset: Number, input: String) => {
   }
 }
 
-provide let is_digit = range(_0, _9)
-provide let is_lower = (c: CodePoint) => Set.Immutable.contains(c, lower_set)
-provide let is_upper = (c: CodePoint) => Set.Immutable.contains(c, upper_set)
-
-provide let is_letter = is_upper |. is_lower
-provide let is_id_start = is_underscore |. is_lower
-provide let is_id_continue = is_id_start |. is_digit
-provide let is_type_start = is_upper
-provide let is_type_continue = is_upper |. is_lower |. is_digit
-
-provide let is_lower_hex_letter = range(_a, _f)
-provide let is_upper_hex_letter = range(_A, _F)
-provide let is_hex_letter = is_lower_hex_letter |. is_upper_hex_letter
-provide let is_hex = is_digit |. is_hex_letter
-provide let is_octal = range(_0, _7)
-provide let is_binary = exactly(_0) |. exactly(_1)
-
-provide let is_e = exactly(_e)
-provide let is_u = exactly(_u)
-provide let is_s = exactly(_s)
-provide let is_S = exactly(_S)
-provide let is_l = exactly(_l)
-provide let is_L = exactly(_L)
-provide let is_x = exactly(_x)
-provide let is_o = exactly(_o)
-provide let is_b = exactly(_b)
-
 provide let to_codepoint_iter = (input: String) => {
   Iter.unfold(
     (input, 0, String.byteLength(input)),
@@ -464,8 +474,23 @@ let binary_codepoint_to_bigint = (code_point: CodePoint) => {
   BigInt.fromNumber(code_point - _0)
 }
 
+let hex_codepoint_to_number = (code_point: CodePoint) => {
+  assert is_hex(code_point)
+  match (code_point) {
+    _ when is_digit(code_point) => code_point - _0,
+    _ when is_lower_hex_letter(code_point) => code_point - _a + 10,
+    _ when is_upper_hex_letter(code_point) => code_point - _A + 10,
+    _ => fail "Not a hex letter: " ++ toString(code_point),
+  }
+}
+
 provide enum TokenState {
   Start,
+  LexString(List<CodePoint>, Number),
+  LexStringEscape(List<CodePoint>, Number),
+  LexStringRawByte(List<CodePoint>, Number),
+  LexStringRawByteFinish(Number, List<CodePoint>, Number),
+  LexStringRawShort(List<CodePoint>, List<CodePoint>, Number),
   LexWhitespace(Number),
   LexName(List<CodePoint>, Number),
   LexType(List<CodePoint>, Number),
@@ -513,6 +538,64 @@ provide let code_point_transformer = (
           to_state(LexMultiCharSymbol(offset, [code_point])),
         _ when is_reserved_symbol(code_point) =>
           yield_(Symbol(code_points_to_string([code_point]), offset), Start),
+        _ when is_double_quote(code_point) =>
+          to_state(LexString([], offset)),
+        _ => to_state(UnknownTokenKind(offset)),
+      },
+
+      LexString(chars, offset) => match (void) {
+        _ when is_backslash(code_point) => to_state(LexStringEscape(chars, offset)),
+        _ when is_double_quote(code_point) =>
+          yield_(
+            StringToken(code_points_to_string(List.reverse(chars)), offset),
+            Start,
+          ),
+        _ => to_state(LexString([code_point, ...chars], offset))
+      },
+
+      LexStringEscape(chars, offset) => match (void) {
+        _ when is_backslash(code_point) => to_state(LexString([code_point, ...chars], offset)),
+        _ when is_0(code_point) => to_state(LexString([0, ...chars], offset)),
+        _ when is_double_quote(code_point) => to_state(LexString([_double_quote, ...chars], offset)),
+        _ when is_r(code_point) => to_state(LexString([_carriage_return, ...chars], offset)),
+        _ when is_t(code_point) => to_state(LexString([_tab, ...chars], offset)),
+        _ when is_n(code_point) => to_state(LexString([_newline, ...chars], offset)),
+        _ when is_v(code_point) => to_state(LexString([_vtab, ...chars], offset)),
+        _ when is_b(code_point) => to_state(LexString([_backspace, ...chars], offset)),
+        _ when is_f(code_point) => to_state(LexString([_form_feed, ...chars], offset)),
+        _ when is_x(code_point) => to_state(LexStringRawByte(chars, offset)),
+        // TODO: _ when is_u(code_point) => to_state(LexStringRawShort(chars, offset)),
+        _ => to_state(LexString([code_point, ...chars], offset)),
+      },
+      LexStringRawByte(code_points, offset) => match (void) {
+        _ when is_hex(code_point) => to_state(LexStringRawByteFinish(code_point, code_points, offset)),
+        _ => to_state(UnknownTokenKind(offset)),
+      },
+      LexStringRawByteFinish(first, code_points, offset) => match (void) {
+        _ when is_hex(code_point) => to_state(LexString([
+          (hex_codepoint_to_number(first) << 4) | hex_codepoint_to_number(code_point),
+          ...code_points,
+        ], offset)),
+        _ => to_state(UnknownTokenKind(offset)),
+      },
+
+      LexStringRawShort([third, second, first], code_points, offset) => match (void) {
+        _ when is_hex(code_point) => to_state(LexString([
+          (hex_codepoint_to_number(first) << 12)
+          | (hex_codepoint_to_number(second) << 8)
+          | (hex_codepoint_to_number(third) << 4)
+          | hex_codepoint_to_number(code_point),
+          ...code_points,
+        ], offset)),
+        _ => to_state(UnknownTokenKind(offset)),
+      },
+
+      LexStringRawShort(chars, code_points, offset) => match (void) {
+        _ when is_hex(code_point) => to_state(LexStringRawShort(
+          [code_point, ...chars],
+          code_points,
+          offset,
+        )),
         _ => to_state(UnknownTokenKind(offset)),
       },
 
@@ -811,6 +894,11 @@ provide let code_point_transformer = (
         LexMultiCharSymbol(offset, code_points) =>
           Some(Symbol(code_points_to_string(List.reverse(code_points)), offset)), // Offset, code points
         UnknownTokenKind(offset) => Some(Unknown(offset)),
+        LexString(_, offset) => Some(Unknown(offset)),
+        LexStringEscape(_, offset) => Some(Unknown(offset)),
+        LexStringRawByte(_, offset) => Some(Unknown(offset)),
+        LexStringRawByteFinish(_, _, offset) => Some(Unknown(offset)),
+        LexStringRawShort(_, _, offset) => Some(Unknown(offset)),
       }
     }
   )
