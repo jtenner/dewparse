@@ -83,6 +83,7 @@ provide let rec map = (fn: t_value => t_result, t_iter: Iter<t_value>) =>
     End => End,
   })
 
+// TODO: Don't use transform (it's dumb!)
 provide let rec filter = (fn: t_value => Bool, t_iter: Iter<t_value>) =>
   transform((t_context, t_value) => if (fn(t_value)) {
     Yield{ value: t_value, context: t_context, advance: true }

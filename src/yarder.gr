@@ -20,7 +20,6 @@ provide enum Yarder<t_expression> {
   Yarder{
     expr_stack: List<t_expression>,
     op_stack: List<Operator>,
-    group_level: Number,
 
     // left unary
     prefix: (String, t_expression) => Result<t_expression, String>,
@@ -52,7 +51,6 @@ provide let make = (
   Yarder{
     expr_stack: [],
     op_stack: [],
-    group_level: 0,
     prefix,
     postfix,
     binary,
@@ -63,15 +61,11 @@ let can_push_op = (op: Operator, yarder: Yarder<t_expression>) => {
 
   match ((op, op_stack)) {
     (_, []) => true,
-    (
-      BinaryOperator(_in_name, _in_prec, _in_assoc),
-      [PostfixOperator(_top_name), ..._],
-    ) => false,
+    (_in, [PostfixOperator(_top), ..._]) => false,
     (
       BinaryOperator(_in_name, _in_prec, _in_assoc),
       [PrefixOperator(_top_name), ..._],
     ) => false,
-    (_in, [PostfixOperator(_top), ..._]) => false,
     (
       BinaryOperator(_left_name, in_prec, _left_assoc),
       [BinaryOperator(_right_name, top_prec, _right_assoc), ..._],
@@ -85,13 +79,12 @@ let can_push_op = (op: Operator, yarder: Yarder<t_expression>) => {
 }
 
 provide let push_expr = (expr: t_expression, yarder: Yarder<t_expression>) => {
-  let Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary } =
+  let Yarder{ expr_stack, op_stack, prefix, postfix, binary } =
     yarder
 
   Yarder{
     expr_stack: [expr, ...expr_stack],
     op_stack,
-    group_level,
     prefix,
     postfix,
     binary,
@@ -99,7 +92,7 @@ provide let push_expr = (expr: t_expression, yarder: Yarder<t_expression>) => {
 }
 
 provide let rec eval_op = (yarder: Yarder<t_expression>) => {
-  let Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary } =
+  let Yarder{ expr_stack, op_stack, prefix, postfix, binary } =
     yarder
 
   match ((op_stack, expr_stack)) {
@@ -111,7 +104,6 @@ provide let rec eval_op = (yarder: Yarder<t_expression>) => {
             Yarder{
               expr_stack: [expr, ...expr_stack],
               op_stack,
-              group_level,
               prefix,
               postfix,
               binary,
@@ -126,7 +118,6 @@ provide let rec eval_op = (yarder: Yarder<t_expression>) => {
             Yarder{
               expr_stack: [expr, ...expr_stack],
               op_stack,
-              group_level,
               prefix,
               postfix,
               binary,
@@ -144,7 +135,6 @@ provide let rec eval_op = (yarder: Yarder<t_expression>) => {
           Yarder{
             expr_stack: [expr, ...expr_stack],
             op_stack,
-            group_level,
             prefix,
             postfix,
             binary,
@@ -159,13 +149,12 @@ provide let rec eval_op = (yarder: Yarder<t_expression>) => {
 
 provide let rec push_op = (op: Operator, yarder: Yarder<t_expression>) => {
   if (can_push_op(op, yarder)) {
-    let Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary } =
+    let Yarder{ expr_stack, op_stack, prefix, postfix, binary } =
       yarder
     Ok(
       Yarder{
         expr_stack,
         op_stack: [op, ...op_stack],
-        group_level,
         prefix,
         postfix,
         binary,
@@ -180,13 +169,12 @@ provide let rec push_op = (op: Operator, yarder: Yarder<t_expression>) => {
 }
 
 provide let push_group = (yarder: Yarder<t_expression>) => {
-  let Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary } =
+  let Yarder{ expr_stack, op_stack, prefix, postfix, binary } =
     yarder
 
   Yarder{
     expr_stack,
     op_stack: [Group, ...op_stack],
-    group_level,
     prefix,
     postfix,
     binary,
@@ -194,12 +182,12 @@ provide let push_group = (yarder: Yarder<t_expression>) => {
 }
 
 provide let rec pop_group = (yarder: Yarder<t_expression>) => {
-  let Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary } =
+  let Yarder{ expr_stack, op_stack, prefix, postfix, binary } =
     yarder
 
   match (op_stack) {
     [Group, ...op_stack] =>
-      Ok(Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary }),
+      Ok(Yarder{ expr_stack, op_stack, prefix, postfix, binary }),
     _ => match (eval_op(yarder)) {
       Err(t) => Err(t),
       Ok(yarder) => pop_group(yarder),
@@ -218,7 +206,7 @@ provide let rec finalize = (yarder: Yarder<t_expression>) => {
 }
 
 provide let pop_value = (yarder: Yarder<t_expression>) => {
-  let Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary } =
+  let Yarder{ expr_stack, op_stack, prefix, postfix, binary } =
     yarder
 
   match (expr_stack) {
@@ -226,7 +214,7 @@ provide let pop_value = (yarder: Yarder<t_expression>) => {
       Ok(
         (
           t_expression,
-          Yarder{ expr_stack, op_stack, group_level, prefix, postfix, binary },
+          Yarder{ expr_stack, op_stack, prefix, postfix, binary },
         ),
       ),
     _ => Err("Value stack underflow."),

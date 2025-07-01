@@ -33,6 +33,7 @@ provide type CodePoint = Number
 provide enum Token {
   Name(String, Number),
   Type(String, Number),
+  ReservedSymbol(String, Number),
   Symbol(String, Number),
   Keyword(String, Number),
   StringToken(String, Number),
@@ -537,7 +538,7 @@ provide let code_point_transformer = (
         _ when is_multi_char_symbol(code_point) =>
           to_state(LexMultiCharSymbol(offset, [code_point])),
         _ when is_reserved_symbol(code_point) =>
-          yield_(Symbol(code_points_to_string([code_point]), offset), Start),
+          yield_(ReservedSymbol(code_points_to_string([code_point]), offset), Start),
         _ when is_double_quote(code_point) =>
           to_state(LexString([], offset)),
         _ => to_state(UnknownTokenKind(offset)),
@@ -908,8 +909,9 @@ provide let code_point_transformer = (
 
 provide let lex = (
   input: String,
-  keywords: Set<String> = Set.Immutable.fromList([]),
-) =>
+  keywords: List<String> = [],
+) => {
+  let keywords = Set.Immutable.fromList(keywords)
   code_point_transformer(
     to_codepoint_iter(input),
     map_token=token => match (token) {
@@ -918,3 +920,4 @@ provide let lex = (
       t => t,
     }
   )
+}

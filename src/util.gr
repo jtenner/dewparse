@@ -1,0 +1,8 @@
+module Util
+
+provide let then = (result: Result<ok, err>, fn: (ok) => Result<ok_next, err>) => {
+  match (result) {
+    Ok(t) => fn(t),
+    Err(t) => Err(t),
+  }
+}

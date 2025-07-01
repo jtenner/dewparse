@@ -1,5 +1,761 @@
 module Parser
 
+from "list" include List
 from "./yarder.gr" include Yarder
-
+from "./iter.gr" include Iter
+from "./lexer.gr" include Lexer
 use Yarder.{ type Operator }
+use Lexer.{ type Token }
+
+
+provide enum NameIdentifier {
+  NameIdentifier(String, Number),
+}
+
+provide enum TypeIdentifier {
+  TypeIdentifier(String, Number),
+}
+
+provide enum SymbolIdentifier {
+  SymbolIdentifier(String, Number),
+}
+
+provide enum Alias {
+  SymbolAlias(SymbolIdentifier),
+  NameAlias(NameIdentifier),
+  TypeAlias(TypeIdentifier),
+}
+
+provide enum Import {
+  // type TypeIdentifier as TypeIdentifier
+  ImportType(TypeIdentifier, Option<Alias>),
+  // fn NameIdentifier as (SymbolIdentifier | NameIdentifier)
+  ImportFn(NameIdentifier, Option<Alias>),
+  // NameIdentifier as NameIdentifier
+  ImportVar(NameIdentifier, Option<Alias>),
+  // "(" SymbolIdentifier ")" as (SymbolIdentifier | NameIdentifier)
+  ImportSymbol(SymbolIdentifier, Option<Alias>),
+  // trait TypeIdentifier as TypeIdentifier
+  ImportTrait(TypeIdentifier, Option<Alias>),
+}
+
+provide enum rec TypeExpression {
+  NamedTypeExpression(TypeIdentifier),
+  SelectTypeExpression(TypeExpression, NameIdentifier),
+  ApplicationTypeExpression(TypeExpression, List<TypeExpression>),
+  FunctionTypeExpression(List<TypeExpression>, TypeExpression),
+  RecordTypeExpression(List<(NameIdentifier, TypeExpression)>),
+  TupleTypeExpression(List<TypeExpression>),
+}
+
+provide enum FnParam {
+  FnParam{
+    name: NameIdentifier,
+    guard: Option<TypeExpression>,
+  },
+}
+
+provide enum rec MatchExpression {
+  NamedMatchExpression(NameIdentifier),
+  CallMatchExpression(MatchExpression, List<MatchExpression>),
+  SelectMatchExpression(MatchExpression, TypeIdentifier),
+  IntegerMatchExpression(BigInt, Bool, Number, Number),
+  FloatMatchExpression(Float64, Number),
+  StringMatchExpression(String, Number),
+  RecordMatchExpression(List<(NameIdentifier, MatchExpression)>),
+  TupleMatchExpression(List<MatchExpression>),
+} 
+
+provide enum rec Expression {
+  NamedExpression(NameIdentifier),
+  CallExpression(Expression, List<Expression>),
+  BlockExpression(List<Expression>),
+  LetExpression(NameIdentifier, Expression),
+  IfExpression(Expression, Expression, Expression),
+  SelectExpression(Expression, NameIdentifier),
+  MatchExpression(Expression, List<MatchArm>),
+  IntegerExpression(BigInt, Bool, Number, Number),
+  FloatExpression(Float64, Number),
+  StringExpression(String, Number),
+  FnExpression(List<FnParam>, Option<TypeExpression>, Expression),
+  RecordExpression(List<(NameIdentifier, Expression)>),
+  TupleExpression(List<Expression>),
+}
+and provide enum MatchArm {
+  MatchArm{
+    pattern: MatchExpression,
+    guard: Option<Expression>,
+    body: Expression,
+  },
+}
+
+provide enum Declaration {
+  ImportDeclaration{
+    path: String,
+    name: TypeIdentifier,
+    imports: List<Import>,
+  },
+  FnDeclaration{
+    is_pub: Bool,
+    id: NameIdentifier,
+    params: List<FnParam>,
+    return_type: Option<TypeExpression>,
+    body: Expression,
+  },
+  ExternDeclaration{
+    is_pub: Bool,
+    id: NameIdentifier,
+    params: List<FnParam>,
+    return_type: TypeExpression,
+  },
+  TypeDeclaration{
+    is_pub: Bool,
+    id: TypeIdentifier,
+    params: List<FnParam>,
+    value: TypeExpression,
+  },
+}
+
+provide enum Module {
+  Module(List<Declaration>),
+}
+
+provide let rec parse_module = (str: String) => {
+  let tokens = Lexer.lex(str, keywords = [
+    "from",
+    "import",
+    "extern",
+    "pub",
+    "fn",
+    "type",
+    "newtype",
+    "builtin",
+    "let",
+    "trait",
+  ])
+
+  do_parse_declarations(tokens, [])
+}
+and do_parse_declarations = (tokens, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("from", _), tokens) => do_parse_import_path(tokens, acc),
+    Next(Keyword("pub", _), tokens) => do_parse_pub(tokens, acc),
+    Next(Keyword("fn", _), tokens) => do_parse_fn_declaration(tokens, false, acc),
+    Next(Keyword("extern", _), tokens) => do_parse_extern(tokens, false, acc),
+    Next(Keyword("type", _), tokens) => do_parse_type(tokens, false, acc),
+    Next(Keyword("builtin", _), tokens) => do_parse_builtin(tokens, false, acc),
+    Next(Keyword("let", _), tokens) => do_parse_let(tokens, false, acc),
+    Next(Keyword("trait", _), tokens) => do_parse_trait(tokens, false, acc),
+    Next(EOF(_), _) => Ok(Module(List.reverse(acc))),
+    Next(t, _) => Err("Unexpected token: " ++ toString(t)),
+    End => Err("Unexpected end of input."),
+  }
+}
+// ImportDeclaration
+and do_parse_import_path = (tokens, acc) => {
+  match (Iter.next(tokens)) {
+    Next(StringToken(path, _), tokens) => do_parse_import_from_expect_import(tokens, path, acc),
+    _ => Err("Expected string token."),
+  }
+}
+and do_parse_import_from_expect_import = (tokens, path, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("import", _), tokens) => do_parse_import_name(tokens, path, acc),
+    _ => Err("Expected `import` keyword."),
+  }
+}
+and do_parse_import_name = (tokens, path, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Type(name, offset), tokens) => {
+      let name = TypeIdentifier(name, offset)
+      do_parse_import_list_maybe_dot(tokens, path, name, acc)
+    },
+    _ => Err("Expected type identifier."),
+  }
+}
+and do_parse_import_list_maybe_dot = (tokens, path, name, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol(".", _), tokens) => do_parse_imports_maybe_import_list_expect_open_brace(tokens, path, name, acc),
+    _ => {
+      let declaration = ImportDeclaration{ path, name, imports: [] }
+      do_parse_declarations(tokens, [declaration, ...acc])
+    },
+  }
+}
+and do_parse_imports_maybe_import_list_expect_open_brace = (tokens, path, name, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("{", _), tokens) => do_parse_import_list(tokens, path, name, [], acc),
+    _ => Err("Expected open brace."),
+  }
+}
+and do_parse_import_list = (tokens, path, name, imports, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("type", _), tokens) => do_parse_import_list_type(tokens, path, name, imports, acc),
+    Next(Keyword("fn", _), tokens) => do_parse_import_list_fn(tokens, path, name, imports, acc),
+    Next(Keyword("trait", _), tokens) => do_parse_import_list_trait(tokens, path, name, imports, acc),
+    Next(Name(id, offset), tokens) => {
+      let id = NameIdentifier(id, offset)
+      do_parse_import_list_var_maybe_alias(tokens, path, name, imports, id, acc)
+    },
+    Next(ReservedSymbol("(", _), tokens) => do_parse_import_list_symbol(tokens, path, name, imports, acc),
+    Next(ReservedSymbol("}", _), tokens) => {
+      let imports = List.reverse(imports)
+      let declaration = ImportDeclaration{ path, name, imports }
+      do_parse_declarations(tokens, [declaration, ...acc])
+    },
+    _ => Err("Expected import or close brace."),
+  }
+}
+
+// Import with Type Keyword: type TypeIdentifier as TypeIdentifier
+and do_parse_import_list_type = (tokens, path, name, imports, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Type(type_name, offset), tokens) => {
+      let type_name = TypeIdentifier(type_name, offset)
+      do_parse_import_list_type_maybe_alias(tokens, path, name, imports, type_name, acc)
+    },
+    _ => Err("Expected type identifier."),
+  }
+}
+and do_parse_import_list_type_maybe_alias = (tokens, path, name: TypeIdentifier, imports, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("as", _), tokens) => match (Iter.next(tokens)) {
+      Next(Type(alias, offset), tokens) => {
+        let alias = TypeIdentifier(alias, offset)
+        let import_type = ImportType(id, Some(TypeAlias(alias)))
+        do_parse_import_list_maybe_end(tokens, path, name, [import_type, ...imports], acc)
+      },
+      _ => Err("Expected type identifier."),
+    },
+    _ => {
+      let import_type = ImportType(id, None)
+      do_parse_import_list_maybe_end(tokens, path, name, [import_type, ...imports], acc)
+    },
+  }
+}
+
+// Import with Fn Keyword: fn NameIdentifier as (SymbolIdentifier | NameIdentifier)
+and do_parse_import_list_fn = (tokens, path, name: TypeIdentifier, imports, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(id, offset), tokens) => {
+      let id = NameIdentifier(id, offset)
+      do_parse_import_list_fn_maybe_alias(tokens, path, name, imports, id, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+and do_parse_import_list_fn_maybe_alias = (tokens, path, name: TypeIdentifier, imports, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("as", _), tokens) => match (Iter.next(tokens)) {
+      Next(Name(alias, offset), tokens) => {
+        let alias = NameIdentifier(alias, offset)
+        let import_fn = ImportFn(id, Some(NameAlias(alias)))
+        do_parse_import_list_maybe_end(tokens, path, name, [import_fn, ...imports], acc)
+      },
+      Next(ReservedSymbol("(", _), tokens) => match (Iter.next(tokens)) {
+        Next(Symbol(alias, offset), tokens) => {
+          let alias = SymbolIdentifier(alias, offset)
+          match (Iter.next(tokens)) {
+            Next(ReservedSymbol(")", _), tokens) => {
+              let import_fn = ImportFn(id, Some(SymbolAlias(alias)))
+              do_parse_import_list_maybe_end(tokens, path, name, [import_fn, ...imports], acc)
+            },
+            _ => Err("Expected close paren."),
+          }
+        },
+        _ => Err("Expected symbol identifier."),
+      },
+      _ => Err("Expected name identifier."),
+    },
+    _ => {
+      let import_fn = ImportFn(id, None)
+      do_parse_import_list_maybe_end(tokens, path, name, [import_fn, ...imports], acc)
+    },
+  }
+}
+
+// Import with Name Keyword: NameIdentifier as NameIdentifier
+and do_parse_import_list_var_maybe_alias = (tokens, path, name: TypeIdentifier, imports, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("as", _), tokens) => match (Iter.next(tokens)) {
+      Next(Name(alias, offset), tokens) => {
+        let alias = NameIdentifier(alias, offset)
+        let import_let = ImportVar(id, Some(NameAlias(alias)))
+        do_parse_import_list_maybe_end(tokens, path, name, [import_let, ...imports], acc)
+      },
+      _ => Err("Expected name identifier."),
+    },
+    _ => {
+      let import_let = ImportVar(id, None)
+      do_parse_import_list_maybe_end(tokens, path, name, [import_let, ...imports], acc)
+    },
+  }
+}
+
+// Import with Trait Keyword: trait TypeIdentifier as TypeIdentifier
+and do_parse_import_list_trait = (tokens, path, name: TypeIdentifier, imports, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Type(trait_name, offset), tokens) => {
+      let trait_name = TypeIdentifier(trait_name, offset)
+      do_parse_import_list_trait_maybe_alias(tokens, path, name, imports, trait_name, acc)
+    },
+    _ => Err("Expected type identifier."),
+  }
+}
+and do_parse_import_list_trait_maybe_alias = (tokens, path, name: TypeIdentifier, imports, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("as", _), tokens) => match (Iter.next(tokens)) {
+      Next(Type(alias, offset), tokens) => {
+        let alias = TypeIdentifier(alias, offset)
+        let import_trait = ImportTrait(id, Some(TypeAlias(alias)))
+        do_parse_import_list_maybe_end(tokens, path, name, [import_trait, ...imports], acc)
+      },
+      _ => Err("Expected type identifier."),
+    },
+    _ => {
+      let import_trait = ImportTrait(id, None)
+      do_parse_import_list_maybe_end(tokens, path, name, [import_trait, ...imports], acc)
+    },
+  }
+}
+
+// Import with Symbol Keyword: "(" SymbolIdentifier ")" as (SymbolIdentifier | NameIdentifier)
+and do_parse_import_list_symbol = (tokens, path, name: TypeIdentifier, imports, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol(name, offset), tokens) => {
+      let id = SymbolIdentifier(name, offset)
+      match (Iter.next(tokens)) {
+        Next(ReservedSymbol(")", _), tokens) => do_parse_import_list_symbol_maybe_alias(tokens, path, name, imports, id, acc),
+        _ => Err("Expected close paren."),
+      }
+    },
+    _ => Err("Expected symbol identifier."),
+  }
+}
+
+and do_parse_import_list_symbol_maybe_alias = (tokens, path, name: TypeIdentifier, imports, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("as", _), tokens) => match (Iter.next(tokens)) {
+      // as "(" symbol ")"
+      Next(ReservedSymbol("(", _), tokens) => match (Iter.next(tokens)) {
+        Next(Symbol(symbol_name, offset), tokens) => {
+          let alias = SymbolAlias(SymbolIdentifier(symbol_name, offset))
+          match (Iter.next(tokens)) {
+            Next(ReservedSymbol(")", _), tokens) => {
+              let import_symbol = ImportSymbol(id, Some(alias))
+              do_parse_import_list_maybe_end(tokens, path, name, [import_symbol, ...imports], acc)
+            },
+            _ => Err("Expected close paren."),
+          }
+        },
+        _ => Err("Expected symbol identifier."),
+      },
+      // as name
+      Next(Name(alias, offset), tokens) => {
+        let alias = NameIdentifier(alias, offset)
+        let import_symbol = ImportSymbol(id, Some(NameAlias(alias)))
+        do_parse_import_list_maybe_end(tokens, path, name, [import_symbol, ...imports], acc)
+      },
+      _ => Err("Expected symbol or name identifier."),
+    },
+    _ => {
+      let import_symbol = ImportSymbol(id, None)
+      do_parse_import_list_maybe_end(tokens, path, name, [import_symbol, ...imports], acc)
+    },
+  }
+}
+
+and do_parse_import_list_maybe_end = (tokens, path, name: TypeIdentifier, imports, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol(",", _), tokens) => do_parse_import_list(tokens, path, name, imports, acc),
+    Next(ReservedSymbol("}", _), tokens) => {
+      let imports = List.reverse(imports)
+      let declaration = ImportDeclaration{ path, name, imports }
+      do_parse_declarations(tokens, [declaration, ...acc])
+    },
+    _ => Err("Expected comma or close brace."),
+  }
+}
+
+// "pub" ...
+and do_parse_pub = (tokens, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("fn", _), tokens) => do_parse_fn_declaration(tokens, true, acc),
+    Next(Keyword("type", _), tokens) => do_parse_type(tokens, true, acc),
+    Next(Keyword("trait", _), tokens) => do_parse_trait(tokens, true, acc),
+    Next(Keyword("let", _), tokens) => do_parse_let(tokens, true, acc),
+    Next(Keyword("extern", _), tokens) => do_parse_extern(tokens, true, acc),
+    Next(Keyword("builtin", _), tokens) => do_parse_builtin(tokens, true, acc),
+    _ => Err("Expected fn, type, or trait."),
+  }
+}
+
+// "fn" ...
+and do_parse_fn_declaration = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let id = NameIdentifier(name, offset)
+      do_parse_fn_declaration_params_expect_open_paren(tokens, is_pub, id, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+// "(" ...
+and do_parse_fn_declaration_params_expect_open_paren = (tokens, is_pub, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("(", _), tokens) => do_parse_fn_declaration_params(tokens, is_pub, id, [], acc),
+    _ => Err("Expected open paren."),
+  }
+}
+
+// ... ")"
+and do_parse_fn_declaration_params = (tokens, is_pub, id, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol(")", _), tokens) => do_parse_fn_declaration_maybe_return_type(tokens, is_pub, id, params, acc),
+    Next(Name(name, offset), tokens) => {
+      let name = NameIdentifier(name, offset)
+      do_parse_fn_declaration_params_maybe_type_guard(tokens, is_pub, id, name, params, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+// ... (":" ...)?
+and do_parse_fn_declaration_params_maybe_type_guard = (tokens, is_pub, id, name, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol(":", _), tokens) => match (parse_type_expression(tokens)) {
+      Ok((type_expression, tokens)) => {
+        let param = FnParam{ name, guard: Some(type_expression) }
+        do_parse_fn_declaration_params_maybe_end(tokens, is_pub, id, [param, ...params], acc)
+      },
+      err => err,
+    },
+      
+    _ => {
+      let param = FnParam{ name, guard: None }
+      do_parse_fn_declaration_params_maybe_end(tokens, is_pub, id, [param, ...params], acc)
+    },
+  }
+}
+
+and do_parse_fn_declaration_params_maybe_end = (tokens, is_pub, id, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol(",", _), tokens) => do_parse_fn_declaration_params(tokens, is_pub, id, params, acc),
+    Next(ReservedSymbol(")", _), tokens) => do_parse_fn_declaration_maybe_return_type(tokens, is_pub, id, params, acc),
+    _ => Err("Expected comma or close paren."),
+  }
+}
+
+// ... ("->" ...)?
+and do_parse_fn_declaration_maybe_return_type = (tokens, is_pub, id, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol("->", _), tokens) => match (parse_type_expression(tokens)) {
+      Ok((type_expression, tokens)) => do_parse_fn_declaration_body(tokens, is_pub, id, params, Some(type_expression), acc),
+      err => err,
+    },
+    _ => do_parse_fn_declaration_body(tokens, is_pub, id, params, None, acc),
+  }
+}
+
+// ... Expression
+and do_parse_fn_declaration_body = (tokens, is_pub, id, params, return_type, acc) => {
+  match (parse_expression(tokens)) {
+    Ok((expression, tokens)) => {
+      let declaration = FnDeclaration{ is_pub, id, params, return_type, body: expression }
+      do_parse_declarations(tokens, [declaration, ...acc])
+    },
+    err => err,
+  }
+}
+
+// "extern" ...
+and do_parse_extern = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("fn", _), tokens) => do_parse_extern_fn(tokens, is_pub, acc),
+    _ => Err("Expected fn."),
+  }
+}
+
+// "fn" ...
+and do_parse_extern_fn = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let id = NameIdentifier(name, offset)
+      do_parse_extern_fn_params_expect_open_paren(tokens, is_pub, id, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+// "(" ...
+and do_parse_extern_fn_params_expect_open_paren = (tokens, is_pub, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("(", _), tokens) => do_parse_extern_fn_params(tokens, is_pub, id, [], acc),
+    _ => Err("Expected open paren."),
+  }
+}
+
+// ... ")"
+and do_parse_extern_fn_params = (tokens, is_pub, id, params, acc) => {
+  match (parse_type_expression(tokens)) {
+    Ok((type_expression, tokens)) => match (Iter.next(tokens)) {
+      Next(ReservedSymbol(",", _), tokens) => do_parse_extern_fn_params(tokens, is_pub, id, [type_expression, ...params], acc),
+      Next(ReservedSymbol(")", _), tokens) => do_parse_extern_fn_expect_arrow(tokens, is_pub, id, params, acc),
+      _ => Err("Expected comma or close paren."),
+    },
+    err => err,
+  }
+}
+
+// ... "->" ...
+and do_parse_extern_fn_expect_arrow = (tokens, is_pub, id, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol("->", _), tokens) => match (parse_type_expression(tokens)) {
+      Ok((type_expression, tokens)) => {
+        let declaration = ExternDeclaration{ is_pub, id, params, return_type }
+        do_parse_declarations(tokens, [declaration, ...acc])
+      },
+      err => err,
+    },
+    _ => Err("Expected arrow."),
+  }
+}
+
+// "type" ...
+and do_parse_type = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Type(name, offset), tokens) => {
+      let id = TypeIdentifier(name, offset)
+      do_parse_type_declaration_maybe_type_parameters(tokens, is_pub, id, acc)
+    },
+    _ => Err("Expected type identifier."),
+  }
+}
+
+// ... ("<" ...)? ...
+and do_parse_type_declaration_maybe_type_parameters = (tokens, is_pub, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("<", _), tokens) => do_parse_type_declaration_type_parameters(tokens, is_pub, id, [], acc),
+    Next(Symbol("=", _), tokens) => do_parse_type_declaration_value_expect_equals(tokens, is_pub, id, [], acc),
+    _ => Err("Expected '=' or '<'."),
+  }
+}
+
+// ... ">" ...
+and do_parse_type_declaration_type_parameters = (tokens, is_pub, id, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let name = NameIdentifier(name, offset)
+      do_parse_type_declaration_type_parameters_maybe_end(tokens, is_pub, id, name, params, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+// ... ("," ...)? ">" ...
+and do_parse_type_declaration_type_parameters_maybe_end = (tokens, is_pub, id, name, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol(",", _), tokens) => do_parse_type_declaration_type_parameters(tokens, is_pub, id, [name, ...params], acc),
+    Next(ReservedSymbol(">", _), tokens) => do_parse_type_declaration_value_expect_equals(tokens, is_pub, id, [name, ...params], acc),
+    _ => Err("Expected ',' or '>'."),
+  }
+}
+
+// ... "=" ...
+and do_parse_type_declaration_value_expect_equals = (tokens, is_pub, id, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol("=", _), tokens) => match (parse_type_expression(tokens)) {
+      Ok((value, tokens)) => {
+        let declaration = TypeDeclaration{ is_pub, id, params, value }
+        do_parse_declarations(tokens, [declaration, ...acc])
+      },
+      err => err,
+    },
+    _ => Err("Expected '='."),
+  }
+}
+
+// "builtin" ...
+and do_parse_builtin = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let id = NameIdentifier(name, offset)
+      match (Iter.next(tokens)) {
+        Next(StringToken(kind, _), tokens) => {
+          let declaration = BuiltinDeclaration{ is_pub, id, kind }
+          do_parse_declarations(tokens, [declaration, ...acc])
+        },
+        _ => Err("Expected string token."),
+      }
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+// "let" ...
+and do_parse_let = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let id = NameIdentifier(name, offset)
+      do_parse_let_maybe_type_guard(tokens, is_pub, id, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+// ... (":" ...)? ...
+and do_parse_let_maybe_type_guard = (tokens, is_pub, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol(":", _), tokens) => match (parse_type_expression(tokens)) {
+      Ok((type_expression, tokens)) => do_parse_let_expect_equals(tokens, is_pub, id, Some(type_expression), acc),
+      err => err,
+    },
+    _ => do_parse_let_expect_equals(tokens, is_pub, id, None, acc),
+  }
+}
+
+// ... "=" ...
+and do_parse_let_expect_equals = (tokens, is_pub, id, guard, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol("=", _), tokens) => match (parse_expression(tokens)) {
+      Ok((value, tokens)) => {
+        let declaration = LetDeclaration{ is_pub, id, guard, value }
+        do_parse_declarations(tokens, [declaration, ...acc])
+      },
+      err => err,
+    },
+    _ => Err("Expected '='."),
+  }
+}
+
+// "trait" ...
+and do_parse_trait = (tokens, is_pub, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Type(name, offset), tokens) => {
+      let id = TypeIdentifier(name, offset)
+      do_parse_trait_maybe_type_parameters(tokens, is_pub, id, acc)
+    },
+    _ => Err("Expected type identifier."),
+  }
+}
+
+// ... ("<" ...)? ...
+and do_parse_trait_maybe_type_parameters = (tokens, is_pub, id, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("<", _), tokens) => do_parse_trait_type_parameters_expect_type_expression(tokens, is_pub, id, acc),
+    Next(ReservedSymbol("{", _), tokens) => do_parse_trait_body_expect_open_brace(tokens, is_pub, id, [], acc),
+    _ => Err("Expected '<' or '{'."),
+  }
+}
+
+// "<" ... (required at least one type expression if < is present)
+and do_parse_trait_type_parameters_expect_type_expression = (tokens, is_pub, id, acc) => {
+  match (parse_type_expression(tokens)) {
+    Ok((type_expression, tokens)) => do_parse_trait_type_parameters_maybe_end(tokens, is_pub, id, [type_expression], params, acc),
+    err => err,
+  }
+}
+
+and do_parse_trait_type_parameters_maybe_type_expression = (tokens, is_pub, id, type_params, acc) => {
+  match (parse_type_expression(tokens)) {
+    Ok((type_expression, tokens)) => do_parse_trait_type_parameters_maybe_end(tokens, is_pub, id, [type_expression, ...type_params], acc),
+    // if there is no type expression, then there must be ","? and ">"
+    _ => match (Iter.next(tokens)) {
+      Next(ReservedSymbol(",", _), tokens) => match (Iter.next(tokens)) {
+        Next(ReservedSymbol(">", _), tokens) => do_parse_trait_body_expect_open_brace(tokens, is_pub, id, type_params, acc),
+        _ => Err("Expected '>'."),
+      },
+      Next(ReservedSymbol(">", _), tokens) => do_parse_trait_body_expect_open_brace(tokens, is_pub, id, type_params, acc),
+      _ => Err("Expected ',' or '>'."),
+    },
+  }
+}
+
+// ... ("," ...)? ">" ...
+and do_parse_trait_type_parameters_maybe_end = (tokens, is_pub, id, type_params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol(",", _), tokens) => do_parse_trait_type_parameters_maybe_type_expression(tokens, is_pub, id, type_params, acc),
+    Next(ReservedSymbol(">", _), tokens) => do_parse_trait_body_expect_open_brace(tokens, is_pub, id, type_params, acc),
+    _ => Err("Expected ',' or '>'."),
+  }
+}
+
+and do_parse_trait_body_expect_open_brace = (tokens, is_pub, id, type_params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("{", _), tokens) => do_parse_trait_body_fns(tokens, is_pub, id, type_params, [], acc),
+    _ => Err("Expected '{'."),
+  }
+}
+
+and do_parse_trait_body_fns = (tokens, is_pub, id, params, fns, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Keyword("fn", _), tokens) => do_parse_trait_body_fn_expect_name(tokens, is_pub, id, type_params, fns, acc),
+    Next(ReservedSymbol("}", _), tokens) => {
+      let declaration = TraitDeclaration{ is_pub, id, type_params, fns }
+      do_parse_declarations(tokens, [declaration, ...acc])
+    },
+    _ => Err("Expected 'fn' or '}'."),
+  }
+}
+
+and do_parse_trait_body_fn_expect_name = (tokens, is_pub, id, type_params, fns, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let fn_name = NameIdentifier(name, offset)
+      do_parse_trait_body_fn_expect_open_paren(tokens, is_pub, id, type_params, fns, fn_name, acc)
+    },
+    _ => Err("Expected name identifier."),
+  }
+}
+
+and do_parse_trait_body_fn_expect_open_paren = (tokens, is_pub, id, type_params, fns, fn_name, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol("(", _), tokens) => do_parse_trait_body_fn_params(tokens, is_pub, id, type_params, fns, fn_name, [], acc),
+    _ => Err("Expected '('."),
+  }
+}
+
+and do_parse_trait_body_fn_params = (tokens, is_pub, id, type_params, fns, fn_name, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Name(name, offset), tokens) => {
+      let param_name = NameIdentifier(name, offset)
+      match (Iter.next(tokens)) {
+        Next(Symbol(":", _), tokens) => match (parse_type_expression(tokens)) {
+          Ok((type_expression, tokens)) => {
+            let param = FnParam{ name: param_name, guard: Some(type_expression) }
+            do_parse_trait_body_fn_params_maybe_end(tokens, is_pub, id, type_params, fns, fn_name, [param, ...params], acc)
+          },
+          err => err,
+        },
+        _ => {
+          let param = FnParam{ name: param_name, guard: None }
+          do_parse_trait_body_fn_params_maybe_end(tokens, is_pub, id, type_params, fns, fn_name, [param, ...params], acc)
+        },
+      }
+    },
+    Next(ReservedSymbol(")", _), tokens) => do_parse_trait_body_fn_maybe_return_type(tokens, is_pub, id, type_params, fns, fn_name, params, acc),
+    _ => Err("Expected name identifier."),
+  }
+}
+
+and do_parse_trait_body_fn_params_maybe_end = (tokens, is_pub, id, type_params, fns, fn_name, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(ReservedSymbol(",", _), tokens) => do_parse_trait_body_fn_params(tokens, is_pub, id, type_params, fns, fn_name, params, acc),
+    Next(ReservedSymbol(")", _), tokens) => do_parse_trait_body_fn_return_type(tokens, is_pub, id, type_params, fns, fn_name, params, acc),
+    _ => Err("Expected ',' or ')'."),
+  }
+}
+
+and do_parse_trait_body_fn_return_type = (tokens, is_pub, id, type_params, fns, fn_name, params, acc) => {
+  match (Iter.next(tokens)) {
+    Next(Symbol(":", _), tokens) => match (parse_type_expression(tokens)) {
+      Ok((return_type, tokens)) => {
+        let fn = TraitFn{ name: fn_name, params: List.reverse(params), return_type }
+        do_parse_trait_body_fns(tokens, is_pub, id, type_params, [fn, ...fns], acc)
+      },
+      err => err,
+    },
+    _ => Err("Expected ':'."),
+  }
+}
